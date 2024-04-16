@@ -165,6 +165,8 @@ def _make_empty_cog(
             photometric = PHOTOMETRIC.RGB
     else:
         nsamples = shape[0]
+        if nsamples == 1:
+            planarconfig = None
 
     buf = BytesIO()
 

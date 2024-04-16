@@ -432,7 +432,16 @@ def test_cog_with_dask_smoke_test(gbox: GeoBox, tmp_path: Path, dtype):
     rr = fut.compute()
     assert str(rr) == fname
 
-    # SYX
+    # SYX, one band
+    img = xr_zeros(gbox, dtype, chunks=(1, n, n), time=["2000"])
+    assert img.ndim == 3
+    assert img.odc.ydim == 1
+    fname = str(tmp_path / "cog-syx-one-band.tif")
+    fut = save_cog_with_dask(img, fname, compression="deflate", level=2)
+    rr = fut.compute()
+    assert str(rr) == fname
+
+    # SYX, multiple bands
     img = xr_zeros(gbox, dtype, chunks=(1, n, n), time=["2000", "2001"])
     assert img.ndim == 3
     assert img.odc.ydim == 1
