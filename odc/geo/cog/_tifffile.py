@@ -155,7 +155,7 @@ def _make_empty_cog(
     ax, yaxis = yaxis_from_shape(shape, gbox)
     im_shape = shape_(shape[yaxis : yaxis + 2])
     photometric = PHOTOMETRIC.MINISBLACK
-    planarconfig = PLANARCONFIG.SEPARATE
+    planarconfig: Optional[PLANARCONFIG] = PLANARCONFIG.SEPARATE
     if ax == "YX":
         nsamples = 1
     elif ax == "YXS":
