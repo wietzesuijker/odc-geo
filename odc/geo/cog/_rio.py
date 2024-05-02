@@ -83,6 +83,40 @@ def _norm_compression_opts(
     return compression
 
 
+def _get_gdal_metadata(
+    xx: xr.DataArray | list[xr.DataArray],
+    tags: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """
+    Extract metadata from xarray for GDAL.
+
+    :param xx: xarray.DataArray
+    :return: Dictionary of metadata
+    """
+    meta: Dict[str, Any] = {"tags": tags}
+    if not isinstance(xx, list):
+        xx = [xx]
+
+    # The logic for this is to fill the lists with
+    # None values if the attribute is not present
+    # as only some bands may have scale and offset
+    # and we need to know which ones...
+    scales, offsets, units = [], [], []
+    for x in xx:
+        scales.append(x.attrs.get("scales", None))
+        offsets.append(x.attrs.get("offsets", None))
+        units.append(x.attrs.get("units", None))
+
+    if any(v is not None for v in scales):
+        meta["scales"] = scales
+    if any(v is not None for v in offsets):
+        meta["offsets"] = offsets
+    if any(v is not None for v in units):
+        meta["units"] = units
+
+    return meta
+
+
 def _write_cog(
     pix: np.ndarray,
     geobox: GeoBox,
@@ -95,6 +129,7 @@ def _write_cog(
     ovr_blocksize: Optional[int] = None,
     use_windowed_writes: bool = False,
     intermediate_compression: Union[bool, str, Dict[str, Any]] = False,
+    gdal_metadata: Optional[Dict[str, Any]] = None,
     **extra_rio_opts,
 ) -> Union[Path, bytes]:
     if blocksize is None:
@@ -158,15 +193,33 @@ def _write_cog(
     def _write(pix, band, dst):
         if not use_windowed_writes:
             dst.write(pix, band)
-            return
+        else:
+            for _, win in dst.block_windows():
+                if pix.ndim == 2:
+                    block = pix[win.toslices()]
+                else:
+                    block = pix[(slice(None),) + win.toslices()]
 
-        for _, win in dst.block_windows():
-            if pix.ndim == 2:
-                block = pix[win.toslices()]
-            else:
-                block = pix[(slice(None),) + win.toslices()]
+                dst.write(block, indexes=band, window=win)
 
-            dst.write(block, indexes=band, window=win)
+        if gdal_metadata is not None:
+            # Add scales, offsets and units if present
+            scales = gdal_metadata.get("scales", None)
+            if scales is not None:
+                dst.scales = scales
+
+            offsets = gdal_metadata.get("offsets", None)
+            if offsets is not None:
+                dst.offsets = offsets
+
+            units = gdal_metadata.get("units", None)
+            if units is not None:
+                dst.units = units
+
+            # Add any tags that are present
+            tags = gdal_metadata.get("tags", None)
+            if tags is not None:
+                dst.update_tags(**tags)
 
     # Deal efficiently with "no overviews needed case"
     if len(overview_levels) == 0:
@@ -227,6 +280,7 @@ def write_cog(
     overview_levels: Optional[List[int]] = None,
     use_windowed_writes: bool = False,
     intermediate_compression: Union[bool, str, Dict[str, Any]] = False,
+    tags: Optional[Dict[str, Any]] = None,
     **extra_rio_opts,
 ) -> Union[Path, bytes]:
     """
@@ -244,7 +298,10 @@ def write_cog(
     :param nodata: Set ``nodata`` flag to this value if supplied, by default ``nodata`` is
                    read from the attributes of the input array (``geo_im.attrs['nodata']``).
     :param use_windowed_writes: Write image block by block (might need this for large images)
-    :param intermediate_compression: Configure compression settings for first pass write, default is no compression
+    :param intermediate_compression: Configure compression settings for first pass write
+                    , default is no compression
+    :param tags: Dictionary of tags to write into the output file. These are written as
+                    GDAL Metadata items in the GeoTIFF file.
     :param extra_rio_opts: Any other option is passed to ``rasterio.open``
 
     :returns: Path to which output was written
@@ -273,6 +330,7 @@ def write_cog(
             ovr_blocksize=ovr_blocksize,
             use_windowed_writes=use_windowed_writes,
             intermediate_compression=intermediate_compression,
+            tags=tags,
             **extra_rio_opts,
         )
         assert result is not None
@@ -299,6 +357,7 @@ def write_cog(
         overview_levels=overview_levels,
         use_windowed_writes=use_windowed_writes,
         intermediate_compression=intermediate_compression,
+        gdal_metadata=_get_gdal_metadata(geo_im, tags),
         **extra_rio_opts,
     )
 
@@ -312,6 +371,7 @@ def to_cog(
     overview_levels: Optional[List[int]] = None,
     use_windowed_writes: bool = False,
     intermediate_compression: Union[bool, str, Dict[str, Any]] = False,
+    tags: Optional[Dict[str, Any]] = None,
     **extra_rio_opts,
 ) -> bytes:
     """
@@ -329,7 +389,10 @@ def to_cog(
     :param nodata: Set ``nodata`` flag to this value if supplied, by default ``nodata`` is
                    read from the attributes of the input array (``geo_im.attrs['nodata']``).
     :param use_windowed_writes: Write image block by block (might need this for large images)
-    :param intermediate_compression: Configure compression settings for first pass write, default is no compression
+    :param intermediate_compression: Configure compression settings for first pass write
+                    , default is no compression
+    :param tags: Dictionary of tags to write into the output file. These are written as
+                    GDAL Metadata items in the GeoTIFF file.
     :param extra_rio_opts: Any other option is passed to ``rasterio.open``
 
     :returns: In-memory GeoTiff file as bytes
@@ -345,6 +408,7 @@ def to_cog(
         overview_levels=overview_levels,
         use_windowed_writes=use_windowed_writes,
         intermediate_compression=intermediate_compression,
+        tags=tags,
         **extra_rio_opts,
     )
 
@@ -381,6 +445,7 @@ def write_cog_layers(
     ovr_blocksize: Optional[int] = None,
     intermediate_compression: Union[bool, str, Dict[str, Any]] = False,
     use_windowed_writes: bool = False,
+    tags: Optional[Dict[str, Any]] = None,
     **extra_rio_opts,
 ) -> Union[Path, bytes, None]:
     """
@@ -417,6 +482,7 @@ def write_cog_layers(
         "blocksize": blocksize,
         "nodata": rio_opts.get("nodata", None),
         "use_windowed_writes": use_windowed_writes,
+        "gdal_metadata": _get_gdal_metadata(xx, tags),
         **_norm_compression_opts(intermediate_compression),
     }
 
