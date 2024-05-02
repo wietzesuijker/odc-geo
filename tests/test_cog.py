@@ -6,6 +6,8 @@ from typing import Optional, Tuple
 import numpy as np
 import pytest
 from dask import array as da
+from rasterio import MemoryFile
+from rasterio import open as rio_open
 
 from odc.geo.cog import CogMeta, cog_gbox, save_cog_with_dask
 from odc.geo.cog._shared import compute_cog_spec, num_overviews
@@ -53,6 +55,51 @@ def test_write_cog(gbox: GeoBox):
         ":mem:", blocksize=32, overview_levels=[2], use_windowed_writes=True
     )
     assert len(img_bytes) == len(img_bytes2)
+
+
+@pytest.mark.parametrize(
+    ["scales", "offsets", "units"],
+    [
+        (0.1, 999, "fridges"),
+        (0.1, 999, None),
+    ],
+)
+def test_write_metadata(gbox: GeoBox, scales, offsets, units):
+    RANDOM = "random_value"
+    img = xr_zeros(gbox, dtype="uint16")
+    assert img.odc.geobox == gbox
+
+    img.attrs.update(scales=scales, offsets=offsets, units=units)
+
+    assert img.attrs["scales"] == scales
+
+    img_bytes = img.odc.to_cog(
+        blocksize=32,
+        tags=dict(random_tag=RANDOM),
+    )
+    with MemoryFile(img_bytes) as memfile:
+        with rio_open(memfile) as src:
+            # Make sure values are set and retrieved correctly
+            if isinstance(scales, (list, tuple)):
+                assert src.scales == tuple(scales)
+            else:
+                assert src.scales[0] == scales
+
+            if isinstance(offsets, (list, tuple)):
+                assert src.offsets == tuple(offsets)
+            else:
+                assert src.offsets[0] == offsets
+
+            if isinstance(units, (list, tuple)):
+                assert src.units == tuple(units)
+            else:
+                assert src.units[0] == units
+
+            # Check tags stick
+            assert src.tags()["random_tag"] == RANDOM
+
+            # Check the underlying data asn't altered
+            assert (src.read() == img.data).all()
 
 
 def test_write_cog_ovr(gbox: GeoBox):
@@ -515,4 +562,5 @@ def test_stats_from_layer(array, nodata, minimum, maximum, mean, stddev, valid_p
     assert stats["maximum"] == minimum
     assert stats["mean"] == mean
     assert stats["stddev"] == stddev
+    assert stats["valid_percent"] == valid_percent
     assert stats["valid_percent"] == valid_percent
