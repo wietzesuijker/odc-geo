@@ -5,6 +5,8 @@
 """
 Write Cloud Optimized GeoTIFFs from xarrays.
 """
+from __future__ import annotations
+
 import warnings
 from contextlib import contextmanager
 from pathlib import Path
