@@ -46,6 +46,8 @@ def gbox_css() -> str:
         return src.read()
 
 
+ne_countries_url = "https://naciscdn.org/naturalearth/110m/cultural/ne_110m_admin_0_countries.zip"
+
 def country_geom(iso3: str, crs: MaybeCRS = None) -> Geometry:
     """
     Extract geometry for a country from geopandas sample data.
@@ -57,8 +59,8 @@ def country_geom(iso3: str, crs: MaybeCRS = None) -> Geometry:
 
     with catch_warnings():
         filterwarnings("ignore", category=FutureWarning)
-        df = gpd.read_file(gpd.datasets.get_path("naturalearth_lowres"))
-    (gg,) = from_geopandas(df[df.iso_a3 == iso3])
+        df = gpd.read_file(ne_countries_url)
+    (gg,) = from_geopandas(df[df.ISO_A3 == iso3])
     crs = norm_crs(crs)
     if crs is not None:
         gg = gg.to_crs(crs)
