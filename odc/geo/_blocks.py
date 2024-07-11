@@ -16,12 +16,12 @@ from .types import Chunks2d
 def _find_common_type(array_types, scalar_type=None):
     if scalar_type is None:
         return np.result_type(*array_types)
-    else:
-        if np.issubdtype(scalar_type, np.floating):
-            array_types = array_types + [0.0]
-        elif np.issubdtype(scalar_type, np.complexfloating):
-            array_types = array_types + [0j]
-        return np.result_type(*array_types)
+
+    if np.issubdtype(scalar_type, np.floating):
+        array_types = array_types + [0.0]
+    elif np.issubdtype(scalar_type, np.complexfloating):
+        array_types = array_types + [0j]
+    return np.result_type(*array_types)
 
 
 class BlockAssembler:
@@ -132,7 +132,6 @@ class BlockAssembler:
             dtype = self._dtype
             if fill_value is not None:
                 # possibly upgrade to float based on fill_value
-                fill_dtype = np.min_scalar_type(fill_value)
                 dtype = _find_common_type([dtype], np.min_scalar_type(fill_value))
         else:
             dtype = np.dtype(dtype)
