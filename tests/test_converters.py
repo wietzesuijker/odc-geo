@@ -7,7 +7,6 @@ import pytest
 
 rasterio = pytest.importorskip("rasterio")
 gpd = pytest.importorskip("geopandas")
-gpd_datasets = pytest.importorskip("geopandas.datasets")
 
 from odc.geo._interop import have
 from odc.geo.converters import extract_gcps, from_geopandas, map_crs, rio_geobox
@@ -17,10 +16,8 @@ from odc.geo.geobox import GeoBox, GeoBoxBase
 
 @pytest.fixture
 def ne_lowres_path():
-    with catch_warnings():
-        filterwarnings("ignore")
-        path = gpd_datasets.get_path("naturalearth_lowres")
-    yield path
+    from odc.geo.data import ne_countries_url
+    yield ne_countries_url
 
 
 def test_from_geopandas(ne_lowres_path):
@@ -30,13 +27,13 @@ def test_from_geopandas(ne_lowres_path):
     assert len(gg) == len(df)
     assert gg[0].crs == "epsg:4326"
 
-    (au,) = from_geopandas(df[df.iso_a3 == "AUS"].to_crs(epsg=3577))
+    (au,) = from_geopandas(df[df.ISO_A3 == "AUS"].to_crs(epsg=3577))
     assert au.crs.epsg == 3577
 
-    (au,) = from_geopandas(df[df.iso_a3 == "AUS"].to_crs(epsg=3857).geometry)
+    (au,) = from_geopandas(df[df.ISO_A3 == "AUS"].to_crs(epsg=3857).geometry)
     assert au.crs.epsg == 3857
 
-    assert from_geopandas(df.continent) == []
+    assert from_geopandas(df.CONTINENT) == []
 
 
 def test_have():
