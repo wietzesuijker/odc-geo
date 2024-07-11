@@ -26,6 +26,7 @@ import numpy as np
 from affine import Affine
 from numpy.polynomial.polynomial import polygrid2d, polyval2d
 
+from ._interop import is_dask_collection
 from .types import (
     XY,
     AnchorEnum,
@@ -286,7 +287,7 @@ def data_resolution_and_offset(
 
     :returns: ``(resolution, offset)``
     """
-    if not isinstance(data, np.ndarray):
+    if is_dask_collection(data):
         data = data.values
 
     if data.size < 2:
