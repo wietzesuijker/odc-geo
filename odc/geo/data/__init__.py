@@ -46,7 +46,10 @@ def gbox_css() -> str:
         return src.read()
 
 
-ne_countries_url = "https://naciscdn.org/naturalearth/110m/cultural/ne_110m_admin_0_countries.zip"
+ne_countries_url = (
+    "https://naciscdn.org/naturalearth/110m/cultural/ne_110m_admin_0_countries.zip"
+)
+
 
 def country_geom(iso3: str, crs: MaybeCRS = None) -> Geometry:
     """
