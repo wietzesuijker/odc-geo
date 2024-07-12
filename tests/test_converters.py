@@ -17,6 +17,7 @@ from odc.geo.geobox import GeoBox, GeoBoxBase
 @pytest.fixture
 def ne_lowres_path():
     from odc.geo.data import ne_countries_url
+
     yield ne_countries_url
 
 
