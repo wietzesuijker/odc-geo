@@ -52,8 +52,8 @@ class _CachedGeoDataFrame:
     _instance = None
 
     # Override in sub-classes
-    _lock = None
-    _data_url = None
+    _lock = threading.Lock()
+    _data_url = ""
 
     def __init__(self):
         # Thread safe class-cached dataload
@@ -77,7 +77,7 @@ class Countries(_CachedGeoDataFrame):
         "https://naciscdn.org/naturalearth/110m/cultural/ne_110m_admin_0_countries.zip"
     )
 
-    def frame_by_iso3(self, iso3: str):
+    def frame_by_iso3(self, iso3):
         df = self._instance
         return df[df.ISO_A3 == iso3]
 
