@@ -91,6 +91,7 @@ def country_geom(iso3: str, crs: MaybeCRS = None) -> Geometry:
     """
     Extract geometry for a country from geopandas sample data.
     """
+    # pylint: disable=import-outside-toplevel
     from ..converters import from_geopandas
 
     countries = Countries()
