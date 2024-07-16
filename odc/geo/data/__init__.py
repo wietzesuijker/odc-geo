@@ -88,6 +88,7 @@ def country_geom(iso3: str, crs: MaybeCRS = None) -> Geometry:
     """
     # pylint: disable=import-outside-toplevel
     from ..converters import from_geopandas
+
     countries = Countries()
     (gg,) = from_geopandas(countries.frame_by_iso3(iso3))
     crs = norm_crs(crs)
