@@ -15,14 +15,14 @@ from odc.geo.geobox import GeoBox, GeoBoxBase
 
 
 @pytest.fixture
-def ne_lowres_path():
-    from odc.geo.data import ne_countries_url
+def countries_geodataframe():
+    from odc.geo.data import Countries
 
-    yield ne_countries_url
+    yield Countries()._instance
 
 
-def test_from_geopandas(ne_lowres_path):
-    df = gpd.read_file(ne_lowres_path)
+def test_from_geopandas(countries_geodataframe):
+    df = countries_geodataframe
     gg = from_geopandas(df)
     assert isinstance(gg, list)
     assert len(gg) == len(df)
