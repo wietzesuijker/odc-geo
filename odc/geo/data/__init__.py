@@ -76,6 +76,7 @@ class Countries(_CachedGeoDataFrame):
     """
     Cache-wrapper around the Natural Earth low-res countries geodataset.
     """
+
     _lock = threading.Lock()
     _data_url = (
         "https://naciscdn.org/naturalearth/110m/cultural/ne_110m_admin_0_countries.zip"
