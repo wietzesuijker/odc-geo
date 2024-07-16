@@ -63,6 +63,7 @@ class _CachedGeoDataFrame:
                     self.__class__._instance = self._load_from_url()
 
     def _load_from_url(self):
+        # pylint: disable=import-outside-toplevel
         import geopandas as gpd
 
         with catch_warnings():
@@ -72,6 +73,9 @@ class _CachedGeoDataFrame:
 
 
 class Countries(_CachedGeoDataFrame):
+    """
+    Cache-wrapper around the Natural Earth low-res countries geodataset.
+    """
     _lock = threading.Lock()
     _data_url = (
         "https://naciscdn.org/naturalearth/110m/cultural/ne_110m_admin_0_countries.zip"
@@ -86,7 +90,6 @@ def country_geom(iso3: str, crs: MaybeCRS = None) -> Geometry:
     """
     Extract geometry for a country from geopandas sample data.
     """
-    # pylint: disable=import-outside-toplevel
     from ..converters import from_geopandas
 
     countries = Countries()
