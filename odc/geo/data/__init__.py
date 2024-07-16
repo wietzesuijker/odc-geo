@@ -1,5 +1,7 @@
 import json
 import lzma
+import threading
+
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
@@ -46,19 +48,54 @@ def gbox_css() -> str:
         return src.read()
 
 
+class _CachedGeoDataFrame:
+    _instance = None
+
+    # Override in sub-classes
+    _lock = threading.Lock()
+    _data_url = ""
+
+    def __init__(self):
+        # Thread safe class-cached dataload
+        if self._instance is None:
+            with self._lock:
+                if self._instance is None:
+                    self.__class__._instance = self._load_from_url()
+
+    def _load_from_url(self):
+        # pylint: disable=import-outside-toplevel
+        import geopandas as gpd
+
+        with catch_warnings():
+            filterwarnings("ignore", category=FutureWarning)
+            df = gpd.read_file(self._data_url)
+        return df
+
+
+class Countries(_CachedGeoDataFrame):
+    """
+    Cache-wrapper around the Natural Earth low-res countries geodataset.
+    """
+
+    _lock = threading.Lock()
+    _data_url = (
+        "https://naciscdn.org/naturalearth/110m/cultural/ne_110m_admin_0_countries.zip"
+    )
+
+    def frame_by_iso3(self, iso3):
+        df = self._instance
+        return df[df.ISO_A3 == iso3]
+
+
 def country_geom(iso3: str, crs: MaybeCRS = None) -> Geometry:
     """
     Extract geometry for a country from geopandas sample data.
     """
     # pylint: disable=import-outside-toplevel
-    import geopandas as gpd
-
     from ..converters import from_geopandas
 
-    with catch_warnings():
-        filterwarnings("ignore", category=FutureWarning)
-        df = gpd.read_file(gpd.datasets.get_path("naturalearth_lowres"))
-    (gg,) = from_geopandas(df[df.iso_a3 == iso3])
+    countries = Countries()
+    (gg,) = from_geopandas(countries.frame_by_iso3(iso3))
     crs = norm_crs(crs)
     if crs is not None:
         gg = gg.to_crs(crs)

@@ -8,6 +8,7 @@ Add ``.odc.`` extension to :py:class:`xarray.Dataset` and :class:`xarray.DataArr
 from __future__ import annotations
 
 import functools
+import json
 import math
 import warnings
 from dataclasses import dataclass
@@ -209,7 +210,8 @@ def _mk_crs_coord(
     crs_wkt = cf.get("crs_wkt", None) or crs.wkt
 
     if gcps is not None:
-        cf["gcps"] = _gcps_to_json(gcps)
+        # Store as string
+        cf["gcps"] = json.dumps(_gcps_to_json(gcps))
 
     if transform is not None:
         cf["GeoTransform"] = _render_geo_transform(transform, precision=24)
@@ -523,13 +525,15 @@ def _extract_gcps(crs_coord: xarray.DataArray) -> Optional[GCPMapping]:
         return None
     crs = _extract_crs(crs_coord)
     try:
+        if isinstance(gcps, str):
+            gcps = json.loads(gcps)
         wld = Geometry(gcps, crs=crs)
         pix = [
             xy_(f["properties"]["col"], f["properties"]["row"])
             for f in gcps["features"]
         ]
         return GCPMapping(pix, wld)
-    except (IndexError, KeyError, ValueError):
+    except (IndexError, KeyError, ValueError, json.JSONDecodeError):
         return None
 
 
