@@ -125,8 +125,8 @@ def test_gcp_geobox_xr(au_gcp_geobox: GCPGeoBox):
     assert _gbox.crs == gbox.crs
     assert (_gbox.extent ^ gbox.extent).is_empty
 
-    # corrupt some gcps
-    yy.spatial_ref.attrs["gcps"]["features"][0].pop("properties")
+    # corrupt gcps
+    yy.spatial_ref.attrs["gcps"] = "not even geojson"
     # should not throw, just return None
     assert yy.odc.uncached.geobox is None
 
