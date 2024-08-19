@@ -8,6 +8,7 @@ GeoBox
    GeoBox
    GeoBox.from_geopolygon
    GeoBox.from_bbox
+   GeoBox.from_rio
    GeoBox.affine
    GeoBox.anchor
    GeoBox.boundary
