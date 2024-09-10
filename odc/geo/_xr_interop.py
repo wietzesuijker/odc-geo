@@ -5,6 +5,7 @@
 """
 Add ``.odc.`` extension to :py:class:`xarray.Dataset` and :class:`xarray.DataArray`.
 """
+
 from __future__ import annotations
 
 import functools
@@ -538,11 +539,11 @@ def _extract_gcps(crs_coord: xarray.DataArray) -> Optional[GCPMapping]:
 
 
 def _extract_geo_transform(crs_coord: xarray.DataArray) -> Optional[Affine]:
-    geo_transfrom_parts = crs_coord.attrs.get("GeoTransform", "").split(" ")
-    if len(geo_transfrom_parts) != 6:
+    geo_transform_parts = crs_coord.attrs.get("GeoTransform", "").split(" ")
+    if len(geo_transform_parts) != 6:
         return None
     try:
-        c, a, b, f, d, e = map(float, geo_transfrom_parts)
+        c, a, b, f, d, e = map(float, geo_transform_parts)
     except ValueError:
         return None
 
