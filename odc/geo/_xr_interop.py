@@ -50,7 +50,7 @@ from .math import (
 )
 from .overlap import compute_output_geobox
 from .roi import roi_is_empty
-from .types import Nodata, Resolution, SomeNodata, SomeResolution, SomeShape, xy_
+from .types import Nodata, Resolution, SomeNodata, SomeResolution, SomeShape, Unset, xy_
 
 # pylint: disable=import-outside-toplevel
 # pylint: disable=too-many-lines
@@ -79,6 +79,8 @@ STANDARD_SPATIAL_DIMS = [
     ("latitude", "longitude"),
     ("lat", "lon"),
 ]
+
+_NoValue = Unset()
 
 
 @dataclass
@@ -1024,11 +1026,11 @@ class ODCExtensionDa(ODCExtension):
         encoding = self._xx.encoding
 
         for k in ["nodata", "_FillValue"]:
-            nodata = attrs.get(k, numpy._NoValue)
-            if nodata is numpy._NoValue:
-                nodata = encoding.get(k, numpy._NoValue)
+            nodata = attrs.get(k, _NoValue)
+            if nodata is _NoValue:
+                nodata = encoding.get(k, _NoValue)
 
-            if nodata is numpy._NoValue:
+            if nodata is _NoValue:
                 continue
 
             if nodata is None:
