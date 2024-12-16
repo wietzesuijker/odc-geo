@@ -5,7 +5,7 @@ S3 utils for COG to S3.
 from __future__ import annotations
 
 from threading import Lock
-from typing import TYPE_CHECKING, Any, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Optional
 
 from cachetools import cached
 
@@ -38,7 +38,7 @@ def _dask_client() -> "distributed.Client" | None:
         return None
 
 
-def s3_parse_url(url: str) -> Tuple[str, str]:
+def s3_parse_url(url: str) -> tuple[str, str]:
     if url.startswith("s3://"):
         bucket, *key = url[5:].split("/", 1)
         key = key[0] if len(key) else ""
@@ -92,6 +92,7 @@ class MultiPartUpload(S3Limits):
 
     @cached({})
     def s3_client(self):
+        """Return the S3 client."""
         # pylint: disable=import-outside-toplevel,import-error
         from botocore.session import Session
 
@@ -108,15 +109,15 @@ class MultiPartUpload(S3Limits):
         )
 
     def initiate(self, **kw) -> str:
+        """Initiate the S3 multipart upload."""
         assert self.uploadId == ""
         s3 = self.s3_client()
-
         rr = s3.create_multipart_upload(Bucket=self.bucket, Key=self.key, **kw)
-        uploadId = rr["UploadId"]
-        self.uploadId = uploadId
-        return uploadId
+        self.uploadId = rr["UploadId"]
+        return self.uploadId
 
     def write_part(self, part: int, data: SomeData) -> dict[str, Any]:
+        """Write a single part to S3."""
         s3 = self.s3_client()
         assert self.uploadId != ""
         rr = s3.upload_part(
@@ -126,31 +127,32 @@ class MultiPartUpload(S3Limits):
             Key=self.key,
             UploadId=self.uploadId,
         )
-        etag = rr["ETag"]
-        return {"PartNumber": part, "ETag": etag}
+        return {"PartNumber": part, "ETag": rr["ETag"]}
 
     @property
     def url(self) -> str:
+        """Return the S3 URL of the object."""
         return f"s3://{self.bucket}/{self.key}"
 
     def finalise(self, parts: list[dict[str, Any]]) -> str:
+        """Finalise the multipart upload."""
         s3 = self.s3_client()
         assert self.uploadId
-
         rr = s3.complete_multipart_upload(
             Bucket=self.bucket,
             Key=self.key,
             UploadId=self.uploadId,
             MultipartUpload={"Parts": parts},
         )
-
         return rr["ETag"]
 
     @property
     def started(self) -> bool:
+        """Check if the multipart upload has been initiated."""
         return len(self.uploadId) > 0
 
     def cancel(self, other: str = ""):
+        """Cancel the multipart upload."""
         uploadId = other if other else self.uploadId
         if not uploadId:
             return
@@ -169,23 +171,23 @@ class MultiPartUpload(S3Limits):
             if uploadId == self.uploadId:
                 self.uploadId = ""
 
-    def list_active(self):
+    def list_active(self) -> list[str]:
+        """List active multipart uploads."""
         s3 = self.s3_client()
         rr = s3.list_multipart_uploads(Bucket=self.bucket, Prefix=self.key)
         return [x["UploadId"] for x in rr.get("Uploads", [])]
 
     def read(self, **kw):
+        """Read the object directly from S3."""
         s3 = self.s3_client()
         return s3.get_object(Bucket=self.bucket, Key=self.key, **kw)["Body"].read()
 
     def __dask_tokenize__(self):
-        return (
-            self.bucket,
-            self.key,
-            self.uploadId,
-        )
+        """Dask-specific tokenization for S3 uploads."""
+        return (self.bucket, self.key, self.uploadId)
 
     def writer(self, kw, *, client: Any = None) -> PartsWriter:
+        """Return a Dask-compatible writer."""
         if client is None:
             client = _dask_client()
         writer = DelayedS3Writer(self, kw)
@@ -206,6 +208,7 @@ class MultiPartUpload(S3Limits):
         client: Any = None,
         **kw,
     ) -> "Delayed":
+        """Upload chunks to S3 with multipart uploads."""
         write = self.writer(kw, client=client) if spill_sz else None
         return mpu_write(
             chunks,

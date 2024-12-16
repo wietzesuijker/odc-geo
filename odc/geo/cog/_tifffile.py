@@ -10,19 +10,21 @@ from __future__ import annotations
 import itertools
 from functools import partial
 from io import BytesIO
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Callable, Optional, Union
 from xml.sax.saxutils import escape as xml_escape
 
 import numpy as np
 import xarray as xr
 
+
 from .._interop import have
 from ..geobox import GeoBox
 from ..math import resolve_nodata
 from ..types import Shape2d, SomeNodata, Unset, shape_
+from ._az import MultiPartUpload as AzMultiPartUpload
 from ._mpu import mpu_write
 from ._mpu_fs import MPUFileSink
-from ._s3 import MultiPartUpload, s3_parse_url
+from ._s3 import MultiPartUpload as S3MultiPartUpload, s3_parse_url
 from ._shared import (
     GDAL_COMP,
     GEOTIFF_TAGS,
@@ -45,7 +47,7 @@ def _render_gdal_metadata(
     precision: int = 10,
     pad: int = 0,
     eol: str = "",
-    gdal_metadata_extra: Optional[List[str]] = None,
+    gdal_metadata_extra: Optional[list[str]] = None,
 ) -> str:
     def _item(sample: int, stats: dict[str, float]) -> str:
         return eol.join(
@@ -117,7 +119,7 @@ def _stats_from_layer(
 
 
 def _make_empty_cog(
-    shape: Tuple[int, ...],
+    shape: tuple[int, ...],
     dtype: Any,
     gbox: Optional[GeoBox] = None,
     *,
@@ -126,10 +128,10 @@ def _make_empty_cog(
     compression: Union[str, Unset] = Unset(),
     compressionargs: Any = None,
     predictor: Union[int, bool, Unset] = Unset(),
-    blocksize: Union[int, List[Union[int, Tuple[int, int]]]] = 2048,
+    blocksize: Union[int, list[Union[int, tuple[int, int]]]] = 2048,
     bigtiff: bool = True,
     **kw,
-) -> Tuple[CogMeta, memoryview]:
+) -> tuple[CogMeta, memoryview]:
     # pylint: disable=import-outside-toplevel,import-error
     have.check_or_error("tifffile", "rasterio", "xarray")
     from tifffile import (
@@ -184,7 +186,7 @@ def _make_empty_cog(
         **kw,
     }
 
-    def _sh(shape: Shape2d) -> Tuple[int, ...]:
+    def _sh(shape: Shape2d) -> tuple[int, ...]:
         if ax == "YX":
             return shape.shape
         if ax == "YXS":
@@ -194,7 +196,7 @@ def _make_empty_cog(
     tsz = norm_blocksize(blocksize[-1])
     im_shape, _, nlevels = compute_cog_spec(im_shape, tsz)
 
-    extratags: List[Tuple[int, int, int, Any]] = []
+    extratags: list[tuple[int, int, int, Any]] = []
     if gbox is not None:
         gbox = gbox.expand(im_shape)
         extratags, _ = geotiff_metadata(
@@ -205,7 +207,7 @@ def _make_empty_cog(
     _blocks = itertools.chain(iter(blocksize), itertools.repeat(blocksize[-1]))
 
     tw = TiffWriter(buf, bigtiff=bigtiff, shaped=False)
-    metas: List[CogMeta] = []
+    metas: list[CogMeta] = []
 
     for tsz, idx in zip(_blocks, range(nlevels + 1)):
         tile = norm_blocksize(tsz)
@@ -250,7 +252,7 @@ def _make_empty_cog(
 def _cog_block_compressor_yxs(
     block: np.ndarray,
     *,
-    tile_shape: Tuple[int, ...] = (),
+    tile_shape: tuple[int, ...] = (),
     encoder: Any = None,
     predictor: Any = None,
     fill_value: Union[float, int] = 0,
@@ -275,7 +277,7 @@ def _cog_block_compressor_yxs(
 def _cog_block_compressor_syx(
     block: np.ndarray,
     *,
-    tile_shape: Tuple[int, int] = (0, 0),
+    tile_shape: tuple[int, int] = (0, 0),
     encoder: Any = None,
     predictor: Any = None,
     fill_value: Union[float, int] = 0,
@@ -376,7 +378,7 @@ def _compress_tiles(
     if meta.axis == "SYX":
         src_ydim = 1
         if data.ndim == 2:
-            _chunks: Tuple[int, ...] = meta.tile.yx
+            _chunks: tuple[int, ...] = meta.tile.yx
         elif len(data.chunks[0]) == 1:
             # if 1 single chunk with all "samples", keep it that way
             _chunks = (data.shape[0], *meta.tile.yx)
@@ -433,7 +435,7 @@ def _pyramids_from_cog_metadata(
     xx: xr.DataArray,
     cog_meta: CogMeta,
     resampling: Union[str, int] = "nearest",
-) -> Tuple[xr.DataArray, ...]:
+) -> tuple[xr.DataArray, ...]:
     out = [xx]
 
     for mm in cog_meta.overviews:
@@ -447,9 +449,9 @@ def _pyramids_from_cog_metadata(
 
 def _extract_tile_info(
     meta: CogMeta,
-    tiles: List[Tuple[int, int, int, int, int]],
+    tiles: list[tuple[int, int, int, int, int]],
     start_offset: int = 0,
-) -> List[Tuple[List[int], List[int]]]:
+) -> list[tuple[list[int], list[int]]]:
     mm = meta.flatten()
     tile_info = [([0] * m.num_tiles, [0] * m.num_tiles) for m in mm]
 
@@ -468,11 +470,11 @@ def _extract_tile_info(
 
 
 def _patch_hdr(
-    tiles: List[Tuple[int, Tuple[int, int, int, int]]],
+    tiles: list[tuple[int, tuple[int, int, int, int]]],
     meta: CogMeta,
     hdr0: bytes,
     stats: Optional[list[dict[str, float]]] = None,
-    gdal_metadata_extra: Optional[List[str]] = None,
+    gdal_metadata_extra: Optional[list[str]] = None,
 ) -> bytes:
     # pylint: disable=import-outside-toplevel,import-error
     from tifffile import TiffFile, TiffPage
@@ -525,8 +527,8 @@ def _norm_compression_tifffile(
     compression: Union[str, Unset] = Unset(),
     compressionargs: Any = None,
     level: Optional[Union[int, float]] = None,
-    kw: Optional[Dict[str, Any]] = None,
-) -> Tuple[int, str, Dict[str, Any]]:
+    kw: Optional[dict[str, Any]] = None,
+) -> tuple[int, str, dict[str, Any]]:
     if kw is None:
         kw = {}
     if isinstance(compression, Unset):
@@ -593,7 +595,7 @@ def _gdal_sample_description(sample: int, description: str) -> str:
     return f'<Item name="DESCRIPTION" sample="{sample}" role="description">{double_escaped_description}</Item>'
 
 
-def _band_names(xx: xr.DataArray) -> List[str]:
+def _band_names(xx: xr.DataArray) -> list[str]:
     if "band" in xx.coords and xx.coords["band"].dtype.type is np.str_:
         return list(xx["band"].values)
     if "long_name" in xx.attrs:
@@ -602,7 +604,7 @@ def _band_names(xx: xr.DataArray) -> List[str]:
     return []
 
 
-def _gdal_sample_descriptions(descriptions: List[str]) -> List[str]:
+def _gdal_sample_descriptions(descriptions: list[str]) -> list[str]:
     """Convert band names to GDAL sample descriptions.
 
     :return: List of GDAL XML metadata lines to place in TIFF file.
@@ -621,19 +623,20 @@ def save_cog_with_dask(
     compressionargs: Any = None,
     level: Optional[Union[int, float]] = None,
     predictor: Union[int, bool, Unset] = Unset(),
-    blocksize: Union[Unset, int, List[Union[int, Tuple[int, int]]]] = Unset(),
+    blocksize: Union[Unset, int, list[Union[int, tuple[int, int]]]] = Unset(),
     bigtiff: bool = True,
     overview_resampling: Union[int, str] = "nearest",
-    aws: Optional[Dict[str, Any]] = None,
+    aws: Optional[dict[str, Any]] = None,
+    azure: Optional[dict[str, Any]] = None,
     client: Any = None,
     stats: bool | int = True,
     **kw,
 ) -> Any:
     """
-    Save a Cloud Optimized GeoTIFF to S3 or file with Dask.
+    Save a Cloud Optimized GeoTIFF to S3, Azure Blob Storage, or file with Dask.
 
     :param xx: Pixels as :py:class:`xarray.DataArray` backed by Dask
-    :param dst: S3 url or a file path on shared storage
+    :param dst: S3, Azure URL, or file path
     :param compression: Compression to use, default is ``DEFLATE``
     :param level: Compression "level", depends on chosen compression
     :param predictor: TIFF predictor setting
@@ -711,7 +714,8 @@ def save_cog_with_dask(
             layers[stats].data, nodata=xx_odc.nodata, yaxis=xx_odc.ydim
         )
 
-    _tiles: List["dask.bag.Bag"] = []
+    # Prepare tiles
+    _tiles: list["dask.bag.Bag"] = []
     for scale_idx, (mm, img) in enumerate(zip(meta.flatten(), layers)):
         for sample_idx in range(meta.num_planes):
             tt = _compress_tiles(img, mm, scale_idx=scale_idx, sample_idx=sample_idx)
@@ -778,7 +782,7 @@ def geotiff_metadata(
     geobox: GeoBox,
     nodata: SomeNodata = "auto",
     gdal_metadata: Optional[str] = None,
-) -> Tuple[List[Tuple[int, int, int, Any]], Dict[str, Any]]:
+) -> tuple[list[tuple[int, int, int, Any]], dict[str, Any]]:
     """
     Convert GeoBox to geotiff tags and metadata for :py:mod:`tifffile`.
 
@@ -815,7 +819,7 @@ def geotiff_metadata(
             return dtype
         return dtype.value
 
-    geo_tags: List[Tuple[int, int, int, Any]] = [
+    geo_tags: list[tuple[int, int, int, Any]] = [
         (t.code, _dtype_as_int(t.dtype), t.count, t.value)
         for t in tf.pages.first.tags.values()
         if t.code in GEOTIFF_TAGS
