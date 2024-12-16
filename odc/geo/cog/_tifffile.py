@@ -21,9 +21,10 @@ from .._interop import have
 from ..geobox import GeoBox
 from ..math import resolve_nodata
 from ..types import Shape2d, SomeNodata, Unset, shape_
+from ._az import MultiPartUpload as AzMultiPartUpload
 from ._mpu import mpu_write
 from ._mpu_fs import MPUFileSink
-from ._s3 import MultiPartUpload, s3_parse_url
+from ._s3 import MultiPartUpload as S3MultiPartUpload, s3_parse_url
 from ._shared import (
     GDAL_COMP,
     GEOTIFF_TAGS,
@@ -631,10 +632,10 @@ def save_cog_with_dask(
     **kw,
 ) -> Any:
     """
-    Save a Cloud Optimized GeoTIFF to S3 or file with Dask.
+    Save a Cloud Optimized GeoTIFF to S3, Azure Blob Storage, or file with Dask.
 
     :param xx: Pixels as :py:class:`xarray.DataArray` backed by Dask
-    :param dst: S3 url or a file path on shared storage
+    :param dst: S3, Azure URL, or file path
     :param compression: Compression to use, default is ``DEFLATE``
     :param level: Compression "level", depends on chosen compression
     :param predictor: TIFF predictor setting
@@ -643,6 +644,7 @@ def save_cog_with_dask(
     :param blocksize: Configure blocksizes for main and overview images
     :param bigtiff: Generate BigTIFF by default, set to ``False`` to disable
     :param aws: Configure AWS write access
+    :param azure: Azure credentials/config
     :param client: Dask client
     :param stats: Set to ``False`` to disable stats computation
 
@@ -699,7 +701,7 @@ def save_cog_with_dask(
 
     if band_names and len(band_names) != meta.nsamples:
         raise ValueError(
-            f"Found {len(band_names)} band names ({band_names}) but there are {meta.nsamples} bands."
+            f"Found {len(band_names)} band names ({band_names}), expected {meta.nsamples} bands."
         )
 
     layers = _pyramids_from_cog_metadata(xx, meta, resampling=overview_resampling)
@@ -731,19 +733,23 @@ def save_cog_with_dask(
             "_stats": _stats,
         }
 
-    tiles_write_order = _tiles[::-1]
-    if len(tiles_write_order) > 4:
-        tiles_write_order = [
-            dask.bag.concat(tiles_write_order[:4]),
-            *tiles_write_order[4:],
-        ]
-
-    bucket, key = s3_parse_url(dst)
-    if not bucket:
-        # assume disk output
+    # Determine output type and initiate uploader
+    parsed_url = urlparse(dst)
+    if parsed_url.scheme == "s3":
+        bucket, key = s3_parse_url(dst)
+        uploader = S3MultiPartUpload(bucket, key, **aws)
+    elif parsed_url.scheme == "az":
+        uploader = AzMultiPartUpload(
+            account_url=azure.get("account_url"),
+            container=parsed_url.netloc,
+            blob=parsed_url.path.lstrip("/"),
+            credential=azure.get("credential"),
+        )
+    else:
+        # Assume local disk
         write = MPUFileSink(dst, parts_base=parts_base)
         return mpu_write(
-            tiles_write_order,
+            _tiles[::-1],
             write,
             mk_header=_patch_hdr,
             user_kw={
@@ -755,15 +761,15 @@ def save_cog_with_dask(
             **upload_params,
         )
 
-    upload_params["ContentType"] = (
-        "image/tiff;application=geotiff;profile=cloud-optimized"
-    )
+    # Upload tiles
+    tiles_write_order = _tiles[::-1]  # Reverse tiles for writing
+    if len(tiles_write_order) > 4:  # Optimize for larger datasets
+        tiles_write_order = [
+            dask.bag.concat(tiles_write_order[:4]),
+            *tiles_write_order[4:],
+        ]
 
-    cleanup = aws.pop("cleanup", False)
-    s3_sink = MultiPartUpload(bucket, key, **aws)
-    if cleanup:
-        s3_sink.cancel("all")
-    return s3_sink.upload(
+    return uploader.upload(
         tiles_write_order,
         mk_header=_patch_hdr,
         user_kw={

@@ -10,12 +10,14 @@ from typing import TYPE_CHECKING, Any, Optional
 from cachetools import cached
 
 from ._mpu import PartsWriter, SomeData, mpu_write
+from ._multipart import MultiPartUploadBase
 
 if TYPE_CHECKING:
     import dask.bag
-    import distributed
     from botocore.credentials import ReadOnlyCredentials
     from dask.delayed import Delayed
+
+    import distributed
 
 _state: dict[str, Any] = {}
 
@@ -68,7 +70,7 @@ class S3Limits:
         return 10_000
 
 
-class MultiPartUpload(S3Limits):
+class MultiPartUpload(S3Limits, MultiPartUploadBase):
     """
     Dask to S3 dumper.
     """
@@ -195,7 +197,6 @@ class MultiPartUpload(S3Limits):
             writer.prep_client(client)
         return writer
 
-    # pylint: disable=too-many-arguments
     def upload(
         self,
         chunks: "dask.bag.Bag" | list["dask.bag.Bag"],
