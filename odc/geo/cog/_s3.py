@@ -282,7 +282,7 @@ class DelayedS3Writer(S3Limits):
         uploadId = _safe_get(shared_state, 0.1)
 
         if uploadId is not None:
-            # someone else initialized it
+            # someone else initialised it
             mpu.uploadId = uploadId
             return mpu
 
@@ -290,7 +290,7 @@ class DelayedS3Writer(S3Limits):
         with lock:
             uploadId = _safe_get(shared_state, 0.1)
             if uploadId is not None:
-                # someone else initialized it while we were getting a lock
+                # someone else initialised it while we were getting a lock
                 mpu.uploadId = uploadId
                 return mpu
 
