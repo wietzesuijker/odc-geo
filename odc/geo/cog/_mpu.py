@@ -8,13 +8,10 @@ from functools import partial
 from typing import (
     TYPE_CHECKING,
     Any,
-    Dict,
     Iterable,
     Iterator,
-    List,
     Optional,
     Protocol,
-    Tuple,
     Union,
 )
 
@@ -35,9 +32,9 @@ SomeData = Union[bytes, bytearray]
 class PartsWriter(Protocol):
     """Protocol for labeled parts data writer."""
 
-    def __call__(self, part: int, data: SomeData) -> Dict[str, Any]: ...
+    def __call__(self, part: int, data: SomeData) -> dict[str, Any]: ...
 
-    def finalise(self, parts: List[Dict[str, Any]]) -> Any: ...
+    def finalise(self, parts: list[dict[str, Any]]) -> Any: ...
 
     @property
     def min_write_sz(self) -> int: ...
@@ -76,8 +73,8 @@ class MPUChunk:
         write_credits: int,
         data: Optional[bytearray] = None,
         left_data: Optional[bytearray] = None,
-        parts: Optional[List[Dict[str, Any]]] = None,
-        observed: Optional[List[Tuple[int, Any]]] = None,
+        parts: Optional[list[dict[str, Any]]] = None,
+        observed: Optional[list[tuple[int, Any]]] = None,
         is_final: bool = False,
         lhs_keep: int = 0,
     ) -> None:
@@ -85,8 +82,8 @@ class MPUChunk:
         self.write_credits = write_credits
         self.data = bytearray() if data is None else data
         self.left_data = bytearray() if left_data is None else left_data
-        self.parts: List[Dict[str, Any]] = [] if parts is None else parts
-        self.observed: List[Tuple[int, Any]] = [] if observed is None else observed
+        self.parts: list[dict[str, Any]] = [] if parts is None else parts
+        self.observed: list[tuple[int, Any]] = [] if observed is None else observed
         self.is_final = is_final
         self.lhs_keep = lhs_keep
         # if supplying data must also supply observed
@@ -221,7 +218,7 @@ class MPUChunk:
         write: PartsWriter,
         leftPartId: Optional[int] = None,
         finalise: bool = True,
-    ) -> Tuple[int, Any]:
+    ) -> tuple[int, Any]:
         rr = None
         if not self.started_write:
             assert not self.left_data
@@ -343,7 +340,7 @@ class MPUChunk:
 
     @staticmethod
     def collate_substreams(
-        substreams: List["dask.bag.Item"],
+        substreams: list["dask.bag.Item"],
         *,
         write: Optional[PartsWriter] = None,
         spill_sz: int = 0,
@@ -423,7 +420,7 @@ def mpu_write(
 
 
 def _mpu_collate_op(
-    substreams: List[MPUChunk],
+    substreams: list[MPUChunk],
     *,
     write: Optional[PartsWriter] = None,
     spill_sz: int = 0,
@@ -439,7 +436,7 @@ def _mpu_collate_op(
 
 def _mpu_append_chunks_op(
     mpus: Iterable[MPUChunk],
-    chunks: Iterable[Tuple[bytes, Any]],
+    chunks: Iterable[tuple[bytes, Any]],
     write: Optional[PartsWriter] = None,
     spill_sz: int = 0,
 ):
