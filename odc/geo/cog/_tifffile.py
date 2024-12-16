@@ -21,10 +21,9 @@ from .._interop import have
 from ..geobox import GeoBox
 from ..math import resolve_nodata
 from ..types import Shape2d, SomeNodata, Unset, shape_
-from ._az import MultiPartUpload as AzMultiPartUpload
 from ._mpu import mpu_write
 from ._mpu_fs import MPUFileSink
-from ._s3 import MultiPartUpload as S3MultiPartUpload, s3_parse_url
+from ._s3 import MultiPartUpload, s3_parse_url
 from ._shared import (
     GDAL_COMP,
     GEOTIFF_TAGS,
