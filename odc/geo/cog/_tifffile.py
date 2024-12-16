@@ -627,16 +627,15 @@ def save_cog_with_dask(
     bigtiff: bool = True,
     overview_resampling: Union[int, str] = "nearest",
     aws: Optional[dict[str, Any]] = None,
-    azure: Optional[dict[str, Any]] = None,
     client: Any = None,
     stats: bool | int = True,
     **kw,
 ) -> Any:
     """
-    Save a Cloud Optimized GeoTIFF to S3, Azure Blob Storage, or file with Dask.
+    Save a Cloud Optimized GeoTIFF to S3 or file with Dask.
 
     :param xx: Pixels as :py:class:`xarray.DataArray` backed by Dask
-    :param dst: S3, Azure URL, or file path
+    :param dst: S3 url or a file path on shared storage
     :param compression: Compression to use, default is ``DEFLATE``
     :param level: Compression "level", depends on chosen compression
     :param predictor: TIFF predictor setting
@@ -662,27 +661,28 @@ def save_cog_with_dask(
     upload_params.update(
         {k: aws.pop(k) for k in ["writes_per_chunk", "spill_sz"] if k in aws}
     )
-
     parts_base = kw.pop("parts_base", None)
 
-    # normalize compression and remove GDAL compat options from kw
+    # Normalise compression settings and remove GDAL compat options from kw
     predictor, compression, compressionargs = _norm_compression_tifffile(
         xx.dtype, predictor, compression, compressionargs, level=level, kw=kw
     )
+
     xx_odc = xx.odc
     assert isinstance(xx_odc, ODCExtensionDa)
     assert isinstance(xx_odc.geobox, GeoBox) or xx_odc.geobox is None
 
     ydim = xx_odc.ydim
-    data_chunks: Tuple[int, int] = xx.data.chunksize[ydim : ydim + 2]
+    data_chunks: tuple[int, int] = xx.data.chunksize[ydim : ydim + 2]
     if isinstance(blocksize, Unset):
         blocksize = [data_chunks, int(max(*data_chunks) // 2)]
 
+    # Metadata
     band_names = _band_names(xx)
     sample_descriptions_metadata = _gdal_sample_descriptions(band_names)
-    no_metadata = (stats is False) and not band_names
-    gdal_metadata = None if no_metadata else ""
+    gdal_metadata = None if stats is False and not band_names else ""
 
+    # Prepare COG metadata and header
     meta, hdr0 = _make_empty_cog(
         xx.shape,
         xx.dtype,
