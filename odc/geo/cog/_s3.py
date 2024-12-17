@@ -70,7 +70,7 @@ class S3Limits:
         return 10_000
 
 
-class MultiPartUpload(S3Limits, MultiPartUploadBase):
+class S3MultiPartUpload(S3Limits, MultiPartUploadBase):
     """
     Dask to S3 dumper.
     """
@@ -237,7 +237,7 @@ class DelayedS3Writer(S3Limits):
 
     # pylint: disable=import-outside-toplevel,import-error
 
-    def __init__(self, mpu: MultiPartUpload, kw: dict[str, Any]):
+    def __init__(self, mpu: S3MultiPartUpload, kw: dict[str, Any]):
         self.mpu = mpu
         self.kw = kw  # mostly ContentType= kinda thing
         self._shared_var: Optional["distributed.Variable"] = None
@@ -263,7 +263,7 @@ class DelayedS3Writer(S3Limits):
             self._shared_var = Variable(self._build_name("MPUpload"), client)
         return self._shared_var
 
-    def _ensure_init(self, final_write: bool = False) -> MultiPartUpload:
+    def _ensure_init(self, final_write: bool = False) -> S3MultiPartUpload:
         # pylint: disable=too-many-return-statements
         mpu = self.mpu
         if mpu.started:

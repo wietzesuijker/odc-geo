@@ -16,15 +16,29 @@ from xml.sax.saxutils import escape as xml_escape
 import numpy as np
 import xarray as xr
 
-
 from .._interop import have
 from ..geobox import GeoBox
 from ..math import resolve_nodata
 from ..types import Shape2d, SomeNodata, Unset, shape_
-from ._az import MultiPartUpload as AzMultiPartUpload
 from ._mpu import mpu_write
 from ._mpu_fs import MPUFileSink
-from ._s3 import MultiPartUpload as S3MultiPartUpload, s3_parse_url
+
+try:
+    from ._az import AzMultiPartUpload
+
+    HAVE_AZURE = True
+except ImportError:
+    AzMultiPartUpload = None
+    HAVE_AZURE = False
+try:
+    from ._s3 import S3MultiPartUpload, s3_parse_url
+
+    HAVE_S3 = True
+except ImportError:
+    S3MultiPartUpload = None
+    s3_parse_url = None
+    HAVE_S3 = False
+
 from ._shared import (
     GDAL_COMP,
     GEOTIFF_TAGS,
@@ -736,9 +750,13 @@ def save_cog_with_dask(
     # Determine output type and initiate uploader
     parsed_url = urlparse(dst)
     if parsed_url.scheme == "s3":
+        if not HAVE_S3:
+            raise ImportError("Install `boto3` to enable S3 support.")
         bucket, key = s3_parse_url(dst)
         uploader = S3MultiPartUpload(bucket, key, **aws)
     elif parsed_url.scheme == "az":
+        if not HAVE_AZURE:
+            raise ImportError("Install azure-storage-blob` to enable Azure support.")
         uploader = AzMultiPartUpload(
             account_url=azure.get("account_url"),
             container=parsed_url.netloc,

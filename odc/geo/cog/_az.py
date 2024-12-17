@@ -33,7 +33,7 @@ class AzureLimits:
         return 50_000
 
 
-class MultiPartUpload(AzureLimits, MultiPartUploadBase):
+class AzMultiPartUpload(AzureLimits, MultiPartUploadBase):
     def __init__(
         self, account_url: str, container: str, blob: str, credential: Any = None
     ):
@@ -161,11 +161,11 @@ class DelayedAzureWriter(AzureLimits):
     Dask-compatible writer for Azure Blob Storage multipart uploads.
     """
 
-    def __init__(self, mpu: MultiPartUpload, kw: dict[str, Any]):
+    def __init__(self, mpu: AzMultiPartUpload, kw: dict[str, Any]):
         """
         Initialise the Azure writer.
 
-        :param mpu: MultiPartUpload instance.
+        :param mpu: AzMultiPartUpload instance.
         :param kw: Additional parameters for the writer.
         """
         self.mpu = mpu
