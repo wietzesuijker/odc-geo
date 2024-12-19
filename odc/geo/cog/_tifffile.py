@@ -11,10 +11,12 @@ import itertools
 from functools import partial
 from io import BytesIO
 from typing import TYPE_CHECKING, Any, Callable, Optional, Union
+from urllib.parse import urlparse
 from xml.sax.saxutils import escape as xml_escape
 
 import numpy as np
 import xarray as xr
+
 
 from .._interop import have
 from ..geobox import GeoBox
@@ -22,22 +24,6 @@ from ..math import resolve_nodata
 from ..types import Shape2d, SomeNodata, Unset, shape_
 from ._mpu import mpu_write
 from ._mpu_fs import MPUFileSink
-
-try:
-    from ._az import AzMultiPartUpload
-
-    HAVE_AZURE = True
-except ImportError:
-    AzMultiPartUpload = None
-    HAVE_AZURE = False
-try:
-    from ._s3 import S3MultiPartUpload, s3_parse_url
-
-    HAVE_S3 = True
-except ImportError:
-    S3MultiPartUpload = None
-    s3_parse_url = None
-    HAVE_S3 = False
 
 from ._shared import (
     GDAL_COMP,
@@ -641,6 +627,7 @@ def save_cog_with_dask(
     bigtiff: bool = True,
     overview_resampling: Union[int, str] = "nearest",
     aws: Optional[dict[str, Any]] = None,
+    azure: Optional[dict[str, Any]] = None,
     client: Any = None,
     stats: bool | int = True,
     **kw,
@@ -669,13 +656,12 @@ def save_cog_with_dask(
 
     from ..xr import ODCExtensionDa
 
-    if aws is None:
-        aws = {}
+    aws = aws or {}
+    azure = azure or {}
 
-    upload_params = {k: kw.pop(k) for k in ["writes_per_chunk", "spill_sz"] if k in kw}
-    upload_params.update(
-        {k: aws.pop(k) for k in ["writes_per_chunk", "spill_sz"] if k in aws}
-    )
+    upload_params = {
+        k: kw.pop(k, None) for k in ["writes_per_chunk", "spill_sz"] if k in kw
+    }
     parts_base = kw.pop("parts_base", None)
 
     # Normalise compression settings and remove GDAL compat options from kw
@@ -750,19 +736,25 @@ def save_cog_with_dask(
     # Determine output type and initiate uploader
     parsed_url = urlparse(dst)
     if parsed_url.scheme == "s3":
-        if not HAVE_S3:
-            raise ImportError("Install `boto3` to enable S3 support.")
-        bucket, key = s3_parse_url(dst)
-        uploader = S3MultiPartUpload(bucket, key, **aws)
+        if have.s3:
+            from ._s3 import S3MultiPartUpload, s3_parse_url
+
+            bucket, key = s3_parse_url(dst)
+            uploader = S3MultiPartUpload(bucket, key, **aws)
+        else:
+            raise RuntimeError("Please install `boto3` to use S3")
     elif parsed_url.scheme == "az":
-        if not HAVE_AZURE:
-            raise ImportError("Install azure-storage-blob` to enable Azure support.")
-        uploader = AzMultiPartUpload(
-            account_url=azure.get("account_url"),
-            container=parsed_url.netloc,
-            blob=parsed_url.path.lstrip("/"),
-            credential=azure.get("credential"),
-        )
+        if have.azure:
+            from ._az import AzMultiPartUpload
+
+            uploader = AzMultiPartUpload(
+                account_url=azure.get("account_url"),
+                container=parsed_url.netloc,
+                blob=parsed_url.path.lstrip("/"),
+                credential=azure.get("credential"),
+            )
+        else:
+            raise RuntimeError("Please install `azure-storage-blob` to use Azure")
     else:
         # Assume local disk
         write = MPUFileSink(dst, parts_base=parts_base)

@@ -1,8 +1,7 @@
 import base64
 from typing import Any, Union
 
-from azure.storage.blob import BlobBlock, BlobServiceClient
-from dask.delayed import Delayed
+import dask
 
 from ._mpu import mpu_write
 from ._multipart import MultiPartUploadBase
@@ -51,6 +50,9 @@ class AzMultiPartUpload(AzureLimits, MultiPartUploadBase):
         self.credential = credential
 
         # Initialise Azure Blob service client
+        # pylint: disable=import-outside-toplevel,import-error
+        from azure.storage.blob import BlobServiceClient
+
         self.blob_service_client = BlobServiceClient(
             account_url=account_url, credential=credential
         )
@@ -85,6 +87,9 @@ class AzMultiPartUpload(AzureLimits, MultiPartUploadBase):
         :param parts: List of uploaded parts metadata.
         :return: The ETag of the finalised blob.
         """
+        # pylint: disable=import-outside-toplevel,import-error
+        from azure.storage.blob import BlobBlock
+
         block_list = [BlobBlock(block_id=part["BlockId"]) for part in parts]
         self.blob_client.commit_block_list(block_list)
         return self.blob_client.get_blob_properties().etag
@@ -121,7 +126,7 @@ class AzMultiPartUpload(AzureLimits, MultiPartUploadBase):
 
     def upload(
         self,
-        chunks: Union["dask.bag.Bag", list["dask.bag.Bag"]],
+        chunks: Union[dask.bag.Bag, list[dask.bag.Bag]],
         *,
         mk_header: Any = None,
         mk_footer: Any = None,
@@ -130,7 +135,7 @@ class AzMultiPartUpload(AzureLimits, MultiPartUploadBase):
         spill_sz: int = 20 * (1 << 20),
         client: Any = None,
         **kw,
-    ) -> "Delayed":
+    ) -> dask.delayed.Delayed:
         """
         Upload chunks to Azure Blob Storage with multipart uploads.
 

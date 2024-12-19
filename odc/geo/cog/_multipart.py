@@ -1,5 +1,9 @@
 """
 Multipart upload interface.
+
+Defines the `MultiPartUploadBase` class for implementing multipart upload functionality.
+This interface standardises methods for initiating, uploading, and finalising
+multipart uploads across storage backends.
 """
 
 from abc import ABC, abstractmethod
