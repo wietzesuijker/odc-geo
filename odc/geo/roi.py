@@ -284,7 +284,7 @@ class VariableSizedTiles:
     @property
     def chunks(self) -> Tuple[Tuple[int, ...], Tuple[int, ...]]:
         """Dask compatible chunk rerpesentation."""
-        y, x = (tuple(np.diff(idx).tolist()) for idx in self._offsets)
+        y, x = (tuple(map(int, np.diff(idx))) for idx in self._offsets)
         return (y, x)
 
     def locate(self, pix: SomeIndex2d) -> Tuple[int, int]:

@@ -2,6 +2,7 @@ import base64
 from typing import Any, Union
 
 import dask
+from dask.delayed import Delayed
 
 from ._mpu import mpu_write
 from ._multipart import MultiPartUploadBase
@@ -33,6 +34,12 @@ class AzureLimits:
 
 
 class AzMultiPartUpload(AzureLimits, MultiPartUploadBase):
+    """
+    Azure Blob Storage multipart upload.
+    """
+
+    # pylint: disable=too-many-instance-attributes
+
     def __init__(
         self, account_url: str, container: str, blob: str, credential: Any = None
     ):
@@ -94,10 +101,11 @@ class AzMultiPartUpload(AzureLimits, MultiPartUploadBase):
         self.blob_client.commit_block_list(block_list)
         return self.blob_client.get_blob_properties().etag
 
-    def cancel(self):
+    def cancel(self, other: str = ""):
         """
         Cancel the upload by clearing the block list.
         """
+        assert other == ""
         self.block_ids.clear()
 
     @property
@@ -118,7 +126,7 @@ class AzMultiPartUpload(AzureLimits, MultiPartUploadBase):
         """
         return bool(self.block_ids)
 
-    def writer(self, kw: dict[str, Any], client: Any = None):
+    def writer(self, kw: dict[str, Any], *, client: Any = None):
         """
         Return a stateless writer compatible with Dask.
         """
@@ -130,12 +138,12 @@ class AzMultiPartUpload(AzureLimits, MultiPartUploadBase):
         *,
         mk_header: Any = None,
         mk_footer: Any = None,
-        user_kw: dict[str, Any] = None,
+        user_kw: dict[str, Any] | None = None,
         writes_per_chunk: int = 1,
         spill_sz: int = 20 * (1 << 20),
         client: Any = None,
         **kw,
-    ) -> dask.delayed.Delayed:
+    ) -> Delayed:
         """
         Upload chunks to Azure Blob Storage with multipart uploads.
 

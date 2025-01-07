@@ -320,6 +320,7 @@ class BoundingBox(Sequence[float]):
             self.crs,
         )
 
+
     def qr2sample(
         self,
         n: int,
@@ -350,13 +351,15 @@ class BoundingBox(Sequence[float]):
         ny = y1 - y0
         pts = quasi_random_r2(n, offset=offset)
         s = numpy.asarray([nx, ny], dtype="float32")
-        edge_pts = []
+        edge_pts: list[tuple[float, float]] = []
 
         if with_edges:
             sample_density = numpy.sqrt(n / (nx * ny))
             n_side = int(numpy.round(sample_density * min(nx, ny))) + 1
             n_side = max(2, n_side)
-            edge_pts = self.boundary(n_side).coords[:-1]
+            edge_pts = [
+                (float(ep[0]), float(ep[1])) for ep in list(self.boundary(n_side).coords[:-1])
+            ]
             if padding is None:
                 padding = 0.3 * min(nx, ny) / (n_side - 1)
 
@@ -368,8 +371,11 @@ class BoundingBox(Sequence[float]):
         pts[:, 0] += x0
         pts[:, 1] += y0
 
-        return multipoint(pts.tolist() + edge_pts, self.crs)
+        coords: list[tuple[float, float]] = [
+            (float(p[0]), float(p[1])) for p in pts.tolist()
+        ] + edge_pts
 
+        return multipoint(coords, self.crs)
 
 def wrap_shapely(method):
     """

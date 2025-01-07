@@ -24,6 +24,7 @@ from ..math import resolve_nodata
 from ..types import Shape2d, SomeNodata, Unset, shape_
 from ._mpu import mpu_write
 from ._mpu_fs import MPUFileSink
+from ._multipart import MultiPartUploadBase
 
 from ._shared import (
     GDAL_COMP,
@@ -736,22 +737,26 @@ def save_cog_with_dask(
     # Determine output type and initiate uploader
     parsed_url = urlparse(dst)
     if parsed_url.scheme == "s3":
-        if have.s3:
+        if have.botocore:
             from ._s3 import S3MultiPartUpload, s3_parse_url
 
             bucket, key = s3_parse_url(dst)
-            uploader = S3MultiPartUpload(bucket, key, **aws)
+            uploader: MultiPartUploadBase = S3MultiPartUpload(bucket, key, **aws)
         else:
             raise RuntimeError("Please install `boto3` to use S3")
     elif parsed_url.scheme == "az":
         if have.azure:
             from ._az import AzMultiPartUpload
 
+            assert azure is not None
+            assert "account_url" in azure
+            assert "credential" in azure
+
             uploader = AzMultiPartUpload(
-                account_url=azure.get("account_url"),
+                account_url=azure["account_url"],
                 container=parsed_url.netloc,
                 blob=parsed_url.path.lstrip("/"),
-                credential=azure.get("credential"),
+                credential=azure["credential"],
             )
         else:
             raise RuntimeError("Please install `azure-storage-blob` to use Azure")

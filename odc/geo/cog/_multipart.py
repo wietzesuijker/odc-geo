@@ -7,9 +7,11 @@ multipart uploads across storage backends.
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, Union
+from typing import Any, Union, TYPE_CHECKING
 
-import dask.bag
+if TYPE_CHECKING:
+    # pylint: disable=import-outside-toplevel,import-error
+    import dask.bag
 
 
 class MultiPartUploadBase(ABC):
@@ -18,34 +20,28 @@ class MultiPartUploadBase(ABC):
     @abstractmethod
     def initiate(self, **kwargs) -> str:
         """Initiate a multipart upload and return an identifier."""
-        pass
 
     @abstractmethod
     def write_part(self, part: int, data: bytes) -> dict[str, Any]:
         """Upload a single part."""
-        pass
 
     @abstractmethod
     def finalise(self, parts: list[dict[str, Any]]) -> str:
         """Finalise the upload with a list of parts."""
-        pass
 
     @abstractmethod
     def cancel(self, other: str = ""):
         """Cancel the multipart upload."""
-        pass
 
     @property
     @abstractmethod
     def url(self) -> str:
         """Return the URL of the upload target."""
-        pass
 
     @property
     @abstractmethod
     def started(self) -> bool:
         """Check if the multipart upload has been initiated."""
-        pass
 
     @abstractmethod
     def writer(self, kw: dict[str, Any], *, client: Any = None) -> Any:
@@ -55,7 +51,6 @@ class MultiPartUploadBase(ABC):
         :param kw: Additional parameters for the writer.
         :param client: Dask client for distributed execution.
         """
-        pass
 
     @abstractmethod
     def upload(
@@ -64,7 +59,7 @@ class MultiPartUploadBase(ABC):
         *,
         mk_header: Any = None,
         mk_footer: Any = None,
-        user_kw: dict[str, Any] = None,
+        user_kw: dict[str, Any] | None = None,
         writes_per_chunk: int = 1,
         spill_sz: int = 20 * (1 << 20),
         client: Any = None,
@@ -82,4 +77,3 @@ class MultiPartUploadBase(ABC):
         :param client: Dask client for distributed execution.
         :return: A Dask delayed object representing the finalised upload.
         """
-        pass
