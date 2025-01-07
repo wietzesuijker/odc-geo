@@ -495,3 +495,49 @@ def _finalizer_dask_op(
 
     _, rr = _root.flush(write, leftPartId=1, finalise=True)
     return rr
+
+
+def get_mpu_kwargs(
+    mk_header=None,
+    mk_footer=None,
+    user_kw=None,
+    writes_per_chunk=1,
+    spill_sz=20 * (1 << 20),
+    client=None,
+) -> dict:
+    """
+    Construct shared keyword arguments for multipart uploads.
+    """
+    return {
+        "mk_header": mk_header,
+        "mk_footer": mk_footer,
+        "user_kw": user_kw,
+        "writes_per_chunk": writes_per_chunk,
+        "spill_sz": spill_sz,
+        "client": client,
+    }
+
+
+def mpu_upload(
+    chunks: Union[dask.bag.Bag, list[dask.bag.Bag]],
+    *,
+    writer: Any,
+    dask_name_prefix: str,
+    **kw,
+) -> "Delayed":
+    """Shared logic for multipart uploads to storage services."""
+    client = kw.pop("client", None)
+    writer_kw = dict(kw)
+    if client is not None:
+        writer_kw["client"] = client
+    spill_sz = kw.get("spill_sz", 20 * (1 << 20))
+    if spill_sz:
+        write = writer(writer_kw)
+    else:
+        write = None
+    return mpu_write(
+        chunks,
+        write,
+        dask_name_prefix=dask_name_prefix,
+        **kw,  # everything else remains
+    )

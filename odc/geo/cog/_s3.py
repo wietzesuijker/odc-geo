@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, Optional
 
 from cachetools import cached
 
-from ._mpu import PartsWriter, SomeData, mpu_write
+from ._mpu import PartsWriter, SomeData
 from ._multipart import MultiPartUploadBase
 
 if TYPE_CHECKING:
@@ -197,30 +197,9 @@ class S3MultiPartUpload(S3Limits, MultiPartUploadBase):
             writer.prep_client(client)
         return writer
 
-    def upload(
-        self,
-        chunks: "dask.bag.Bag" | list["dask.bag.Bag"],
-        *,
-        mk_header: Any = None,
-        mk_footer: Any = None,
-        user_kw: dict[str, Any] | None = None,
-        writes_per_chunk: int = 1,
-        spill_sz: int = 20 * (1 << 20),
-        client: Any = None,
-        **kw,
-    ) -> "Delayed":
-        """Upload chunks to S3 with multipart uploads."""
-        write = self.writer(kw, client=client) if spill_sz else None
-        return mpu_write(
-            chunks,
-            write,
-            mk_header=mk_header,
-            mk_footer=mk_footer,
-            user_kw=user_kw,
-            writes_per_chunk=writes_per_chunk,
-            spill_sz=spill_sz,
-            dask_name_prefix="s3finalise",
-        )
+    def dask_name_prefix(self) -> str:
+        """Return the Dask name prefix for S3."""
+        return "s3finalise"
 
 
 def _safe_get(v, timeout=0.1):

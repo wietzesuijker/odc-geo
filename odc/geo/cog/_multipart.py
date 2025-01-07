@@ -9,6 +9,9 @@ multipart uploads across storage backends.
 from abc import ABC, abstractmethod
 from typing import Any, Union, TYPE_CHECKING
 
+from dask.delayed import Delayed
+from ._mpu import get_mpu_kwargs, mpu_upload
+
 if TYPE_CHECKING:
     # pylint: disable=import-outside-toplevel,import-error
     import dask.bag
@@ -53,6 +56,9 @@ class MultiPartUploadBase(ABC):
         """
 
     @abstractmethod
+    def dask_name_prefix(self) -> str:
+        """Return the dask name prefix specific to the backend."""
+
     def upload(
         self,
         chunks: Union["dask.bag.Bag", list["dask.bag.Bag"]],
@@ -63,17 +69,19 @@ class MultiPartUploadBase(ABC):
         writes_per_chunk: int = 1,
         spill_sz: int = 20 * (1 << 20),
         client: Any = None,
-        **kw,
-    ) -> Any:
-        """
-        Orchestrate the upload process with multipart uploads.
-
-        :param chunks: Dask bag of chunks to upload.
-        :param mk_header: Function to create header data.
-        :param mk_footer: Function to create footer data.
-        :param user_kw: User-provided metadata for the upload.
-        :param writes_per_chunk: Number of writes per chunk.
-        :param spill_sz: Spill size for buffering data.
-        :param client: Dask client for distributed execution.
-        :return: A Dask delayed object representing the finalised upload.
-        """
+    ) -> Delayed:
+        """High-level upload that calls mpu_upload under the hood."""
+        kwargs = get_mpu_kwargs(
+            mk_header=mk_header,
+            mk_footer=mk_footer,
+            user_kw=user_kw,
+            writes_per_chunk=writes_per_chunk,
+            spill_sz=spill_sz,
+            client=client,
+        )
+        return mpu_upload(
+            chunks,
+            writer=self.writer,
+            dask_name_prefix=self.dask_name_prefix(),
+            **kwargs,
+        )

@@ -1,10 +1,6 @@
 import base64
-from typing import Any, Union
+from typing import Any
 
-import dask
-from dask.delayed import Delayed
-
-from ._mpu import mpu_write
 from ._multipart import MultiPartUploadBase
 
 
@@ -132,41 +128,9 @@ class AzMultiPartUpload(AzureLimits, MultiPartUploadBase):
         """
         return DelayedAzureWriter(self, kw)
 
-    def upload(
-        self,
-        chunks: Union[dask.bag.Bag, list[dask.bag.Bag]],
-        *,
-        mk_header: Any = None,
-        mk_footer: Any = None,
-        user_kw: dict[str, Any] | None = None,
-        writes_per_chunk: int = 1,
-        spill_sz: int = 20 * (1 << 20),
-        client: Any = None,
-        **kw,
-    ) -> Delayed:
-        """
-        Upload chunks to Azure Blob Storage with multipart uploads.
-
-        :param chunks: Dask bag of chunks to upload.
-        :param mk_header: Function to create header data.
-        :param mk_footer: Function to create footer data.
-        :param user_kw: User-provided metadata for the upload.
-        :param writes_per_chunk: Number of writes per chunk.
-        :param spill_sz: Spill size for buffering data.
-        :param client: Dask client for distributed execution.
-        :return: A Dask delayed object representing the finalised upload.
-        """
-        write = self.writer(kw, client=client) if spill_sz else None
-        return mpu_write(
-            chunks,
-            write,
-            mk_header=mk_header,
-            mk_footer=mk_footer,
-            user_kw=user_kw,
-            writes_per_chunk=writes_per_chunk,
-            spill_sz=spill_sz,
-            dask_name_prefix="azure-finalise",
-        )
+    def dask_name_prefix(self) -> str:
+        """Return the Dask name prefix for Azure."""
+        return "azure-finalise"
 
 
 class DelayedAzureWriter(AzureLimits):
