@@ -1,7 +1,8 @@
 # odc/geo/cog/_mpu.py
 """
 Multi-part upload as a graph processing primitive.
-Immutable MPUChunk implementation.
+IMMUTABLE MPUChunk implementation focused on correctness with Dask.
+Fixes _clone TypeError and _write_part AttributeError by inlining write logic.
 """
 # pylint: disable=too-many-lines
 
@@ -17,6 +18,7 @@ from typing import (
     Optional,
     Protocol,
     Union,
+    Tuple,
 )
 
 # Dask imports
@@ -58,12 +60,12 @@ class PartsWriter(Protocol):
 # pylint: disable=too-many-instance-attributes
 class MPUChunk:
     """
-    Represents state during multi-part upload processing.
-    Designed to be immutable: methods return new instances with updated state.
+    Represents state during multi-part upload processing. Immutable design:
+    methods return new instances with updated state.
     """
 
     __slots__ = (
-        "nextPartId",  # Internal attribute name
+        "nextPartId",
         "write_credits",
         "data",
         "left_data",
@@ -76,7 +78,7 @@ class MPUChunk:
     # pylint: disable=too-many-arguments
     def __init__(
         self,
-        partId: int,  # Parameter name for __init__
+        partId: int,  # Init parameter name
         write_credits: int,
         data: Optional[bytearray] = None,
         left_data: Optional[bytearray] = None,
@@ -85,7 +87,7 @@ class MPUChunk:
         is_final: bool = False,
         lhs_keep: int = 0,
     ) -> None:
-        self.nextPartId = partId  # Assign parameter to attribute
+        self.nextPartId = partId  # Internal attribute name
         self.write_credits = write_credits
         self.data = data if data is not None else bytearray()
         self.left_data = left_data if left_data is not None else bytearray()
@@ -97,28 +99,23 @@ class MPUChunk:
 
     def _clone(self, **kwargs) -> "MPUChunk":
         """Helper to create a new instance with updated fields."""
-        slot_values = {s: getattr(self, s) for s in self.__slots__}
+        slot_values = {s: getattr(self, s) for s in self.__slots__ if hasattr(self, s)}
         slot_values.update(kwargs)
-
-        # **FIX:** Map internal attribute name to __init__ parameter name
+        # Map internal attribute name to __init__ parameter name
         if "nextPartId" in slot_values:
             slot_values["partId"] = slot_values.pop("nextPartId")
-
         # Ensure mutable types are copied if not explicitly replaced by kwargs
         for field in ["data", "left_data", "parts", "observed"]:
             if field not in kwargs and field in slot_values:
-                current_val = slot_values.get(field)  # Use .get for safety
+                current_val = slot_values.get(field)
                 if isinstance(current_val, (bytearray, list)):
-                    slot_values[field] = current_val[:]
-
-        # Remove potential kwargs that are not __init__ parameters
-        # (although with slots this shouldn't happen unless kwargs match slot names)
+                    slot_values[field] = current_val[:]  # Shallow copy
         valid_init_args = {"partId", "write_credits", "data", "left_data", "parts", "observed", "is_final", "lhs_keep"}
         init_kwargs = {k: v for k, v in slot_values.items() if k in valid_init_args}
-
-        return MPUChunk(**init_kwargs)  # Call __init__ with corrected args
+        return MPUChunk(**init_kwargs)
 
     def __dask_tokenize__(self):
+        # Token based on immutable fields and summaries of mutable ones
         return (
             "MPUChunk",
             self.nextPartId,
@@ -151,7 +148,7 @@ class MPUChunk:
         return f"MPUChunk({', '.join(attrs)})"
 
     def append(self, data: SomeData, chunk_id: Any = None) -> "MPUChunk":
-        """Return a new MPUChunk with data appended to the buffer."""
+        """Return NEW chunk with data appended."""
         new_data = self.data + data
         new_observed = self.observed + [(len(data), chunk_id)]
         return self._clone(data=new_data, observed=new_observed)
@@ -165,30 +162,27 @@ class MPUChunk:
     def merge(
         lhs: "MPUChunk",
         rhs: "MPUChunk",
-        write: Optional[PartsWriter] = None,  # Kept for signature, but unused
+        write: Optional[PartsWriter] = None,  # Unused
     ) -> "MPUChunk":
-        """
-        Merge two MPUChunk objects (lhs processed before rhs). Functional style.
-        Returns a *new* merged chunk. Combines buffers correctly.
-        """
+        """Merge two chunks (functional style). Returns NEW chunk."""
         del write
-
         if not rhs.started_write:
             assert not rhs.left_data and not rhs.parts
-            return MPUChunk(  # Direct call uses partId parameter name correctly
+            # Combine buffers, keeping lhs.left_data separate if present
+            return MPUChunk(
                 lhs.nextPartId,
                 lhs.write_credits + rhs.write_credits,
-                lhs.data + rhs.data,
-                lhs.left_data[:],
+                lhs.data + rhs.data,  # Combine main buffers
+                lhs.left_data[:],  # Keep lhs leftover
                 lhs.parts[:],
                 lhs.observed + rhs.observed,
                 rhs.is_final,
                 lhs.lhs_keep,
             )
 
+        # If rhs wrote, combine LHS leftover/buffer + RHS leftover -> new leftover
         new_left_data = lhs.left_data + lhs.data + rhs.left_data
-
-        return MPUChunk(  # Direct call uses partId parameter name correctly
+        return MPUChunk(
             rhs.nextPartId,
             rhs.write_credits,
             rhs.data[:],
@@ -200,244 +194,181 @@ class MPUChunk:
         )
 
     # pylint: disable=too-many-statements, too-many-branches
-    def flush_rhs(self, write: Optional[PartsWriter], extra_data: Optional[bytearray] = None) -> "MPUChunk":
-        """
-        Flushes internal buffer (`.data` + `extra_data`) if conditions are met.
-        Returns a *new* MPUChunk instance reflecting the state after the flush attempt.
-        Handles multi-part writes and lhs_keep separation.
-        """
-        if write is None:
-            combined_len = len(self.data) + (len(extra_data) if extra_data else 0)
-            if combined_len > 0:
-                raise RuntimeError("Flush required but no writer provided")
-            return self
-
-        data_to_flush = self.data[:]  # Copy current buffer
-        if extra_data:
-            data_to_flush += extra_data
-
-        writeable_len = len(data_to_flush)
-        first_write = not self.started_write
-
-        if first_write and self.lhs_keep > 0:
-            writeable_len = max(0, writeable_len - self.lhs_keep)
-
-        should_flush = (self.is_final and writeable_len > 0) or (
-            not self.is_final and writeable_len >= write.min_write_sz
-        )
-
-        if not self.is_final and self.write_credits < 1:
-            should_flush = False
-
-        if not should_flush:
-            # Return new state with combined data moved to .data
-            return self._clone(data=data_to_flush, left_data=self.left_data[:])
-
-        # --- Proceed with Flush - Calculate new state ---
-        new_data_buffer = bytearray()
-        new_left_data_buffer = self.left_data[:]
-        new_parts = self.parts[:]
-        new_next_part_id = self.nextPartId
-        new_credits = self.write_credits
-        max_chunk_size = write.max_write_sz
-        current_write_data = data_to_flush
-
-        if first_write and self.lhs_keep > 0:
-            if len(current_write_data) < self.lhs_keep:
-                new_left_data_buffer += current_write_data
-                # Return state with data moved to left_data, nothing flushed
-                return self._clone(data=new_data_buffer, left_data=new_left_data_buffer)
-
-            if new_left_data_buffer:
-                logger.warning("flush_rhs: Overwriting non-empty left_data.")
-            new_left_data_buffer = bytearray(current_write_data[: self.lhs_keep])
-            current_write_data = current_write_data[self.lhs_keep :]
-
-        offset = 0
-        total_size_to_write = len(current_write_data)
-        while offset < total_size_to_write:
-            if new_credits < 1:
-                new_data_buffer = bytearray(current_write_data[offset:])
-                logger.error("flush_rhs: Ran out of credits at part %d.", new_next_part_id)
-                # Return state *before* the failed write attempt
-                return MPUChunk(
-                    new_next_part_id,
-                    new_credits,
-                    new_data_buffer,
-                    new_left_data_buffer,
-                    new_parts,
-                    self.observed[:],
-                    self.is_final,
-                    self.lhs_keep,
-                )
-
-            if not write.min_part <= new_next_part_id <= write.max_part:
-                new_data_buffer = bytearray(current_write_data[offset:])
-                # Return state before invalid write attempt
-                return MPUChunk(
-                    new_next_part_id,
-                    new_credits,
-                    new_data_buffer,
-                    new_left_data_buffer,
-                    new_parts,
-                    self.observed[:],
-                    self.is_final,
-                    self.lhs_keep,
-                )
-                # raise ValueError(f"flush_rhs: Part ID {new_next_part_id} out of range")
-
-            chunk_size = min(total_size_to_write - offset, max_chunk_size)
-            chunk_data = current_write_data[offset : offset + chunk_size]
-
-            try:
-                part = write(new_next_part_id, bytes(chunk_data))
-            except Exception as e:
-                logger.error("flush_rhs: Writer failed part %d: %s", new_next_part_id, e, exc_info=True)
-                new_data_buffer = bytearray(current_write_data[offset:])
-                # Return state before failed write attempt
-                return MPUChunk(
-                    new_next_part_id,
-                    new_credits,
-                    new_data_buffer,
-                    new_left_data_buffer,
-                    new_parts,
-                    self.observed[:],
-                    self.is_final,
-                    self.lhs_keep,
-                )
-                # raise RuntimeError(f"Writer failed for part {new_next_part_id}") from e
-
-            if part.get("PartNumber") != new_next_part_id:
-                logger.warning(
-                    "PartNumber mismatch part %d: Writer returned %s", new_next_part_id, part.get("PartNumber")
-                )
-
-            new_parts.append(part)
-            new_next_part_id += 1
-            new_credits -= 1
-            offset += chunk_size
-
-        return MPUChunk(
-            new_next_part_id,
-            new_credits,
-            new_data_buffer,
-            new_left_data_buffer,
-            new_parts,
-            self.observed[:],
-            self.is_final,
-            self.lhs_keep,
-        )
-
     def flush(
         self,
         write: PartsWriter,
         leftPartId: Optional[int] = None,
         finalise: bool = True,
-    ) -> tuple["MPUChunk", Any]:
+    ) -> Tuple["MPUChunk", Any]:
         """
-        Flush remaining data and optionally finalize. Returns new state and result.
-        Handles left_data flushing correctly based on finalise flag.
+        Flush all remaining data and optionally finalize. Returns new state and result.
+        Handles left_data correctly. Immutable. Inlines write logic.
         """
         current_state: MPUChunk = self
         result = None
+        new_parts = current_state.parts[:]
+        new_next_part_id = current_state.nextPartId
+        new_credits = current_state.write_credits
+        new_left_data = current_state.left_data[:]
+        new_data = current_state.data[:]
 
-        if not current_state.started_write:
-            if current_state.left_data:
-                logger.warning("flush: Non-empty left_data when !started_write.")
-            partId = current_state.nextPartId if leftPartId is None else leftPartId
-            new_parts = current_state.parts[:]
-            new_next_part_id = current_state.nextPartId
-            new_credits = current_state.write_credits
-            if current_state.data:
-                part_info = write(partId, current_state.data)
-                new_parts.append(part_info)
-                new_next_part_id += 1
+        # 1. Handle left_data (header/lhs_keep)
+        if new_left_data:
+            if finalise or len(new_left_data) >= write.min_write_sz:
+                partId_for_left = write.min_part if leftPartId is None else leftPartId
+                if any(p.get("PartNumber") == partId_for_left for p in new_parts):
+                    logger.warning("Flush: left_data Part ID %d might clash!", partId_for_left)
+
+                # --- Inlined write logic for left_data ---
+                data_to_write = bytes(new_left_data)
+                part_id = partId_for_left
+                if new_credits < 1:
+                    raise RuntimeError(f"Insufficient credits: left part {part_id}")
+                if not write.min_part <= part_id <= write.max_part:
+                    raise ValueError(f"Part ID {part_id} out of range")
+                if len(data_to_write) > write.max_write_sz:
+                    logger.warning("Writing oversized left_data part %d", part_id)
+                try:
+                    part_info = write(part_id, data_to_write)
+                except Exception as e:
+                    raise RuntimeError(f"Writer failed for left_data part {part_id}") from e
+                if part_info.get("PartNumber") != part_id:
+                    logger.warning("PartNumber mismatch %d", part_id)
+                # --- End Inlined write ---
+
+                new_parts.insert(0, part_info)
+                new_left_data = bytearray()  # Clear buffer for new state
+                if partId_for_left >= new_next_part_id:
+                    new_next_part_id = part_id + 1
                 new_credits -= 1
-            # Create new state with cleared buffer
-            current_state = self._clone(
-                data=bytearray(), parts=new_parts, nextPartId=new_next_part_id, write_credits=new_credits
-            )
-        else:
-            # Flush main buffer first if data exists
-            if current_state.data:
-                original_final_flag = current_state.is_final
-                # Create a temporary state to pass to flush_rhs
-                temp_state = current_state._clone(is_final=finalise or current_state.is_final)
-                current_state = temp_state.flush_rhs(write)  # Update state with result of flush
-                current_state.is_final = original_final_flag  # Restore original flag
 
-            # Flush left_data conditionally from the potentially updated state
-            if current_state.left_data:
-                if finalise or len(current_state.left_data) >= write.min_write_sz:
-                    partId = write.min_part if leftPartId is None else leftPartId
-                    part_info = write(partId, current_state.left_data)
-                    new_parts = current_state.parts[:]
-                    new_parts.insert(0, part_info)
-                    # Create new state with cleared left_data
-                    current_state = current_state._clone(left_data=bytearray(), parts=new_parts)
+        # 2. Handle main data buffer (potentially multiple parts)
+        if new_data:
+            data_to_flush = new_data[:]
+            offset = 0
+            total_size_to_write = len(data_to_flush)
+            max_chunk_size = write.max_write_sz
 
+            while offset < total_size_to_write:
+                # --- Inlined write logic for main data buffer parts ---
+                part_id = new_next_part_id
+                if new_credits < 1:
+                    raise RuntimeError(f"Insufficient credits: part {part_id}")
+                if not write.min_part <= part_id <= write.max_part:
+                    raise ValueError(f"Part ID {part_id} out of range")
+
+                chunk_size = min(total_size_to_write - offset, max_chunk_size)
+                chunk_data = data_to_flush[offset : offset + chunk_size]
+
+                if len(chunk_data) > write.max_write_sz:
+                    logger.warning("Writing oversized data part %d", part_id)
+
+                try:
+                    part_info = write(part_id, bytes(chunk_data))
+                except Exception as e:
+                    raise RuntimeError(f"Writer failed for data part {part_id}") from e
+                if part_info.get("PartNumber") != part_id:
+                    logger.warning("PartNumber mismatch %d", part_id)
+                # --- End Inlined write ---
+
+                new_parts.append(part_info)
+                new_next_part_id = part_id + 1
+                new_credits -= 1
+                offset += chunk_size
+
+            new_data = bytearray()  # Clear buffer after writing all parts
+
+        # 3. Create final state object reflecting flushed buffers
+        final_state = MPUChunk(
+            new_next_part_id,
+            new_credits,
+            new_data,
+            new_left_data,
+            new_parts,
+            current_state.observed[:],
+            finalise or current_state.is_final,
+            current_state.lhs_keep,
+        )
+
+        # 4. Finalise if requested
         if finalise:
-            result = write.finalise(current_state.parts)
+            result = write.finalise(final_state.parts)
 
-        return current_state, result  # Return the final state and result
+        return final_state, result
 
     def maybe_write(self, write: PartsWriter, spill_sz: int) -> "MPUChunk":
         """
-        Conditionally write a part if enough data accumulated. Returns new state.
+        Conditionally write a part if enough data accumulated. Returns new state. Immutable.
+        Uses inlined write logic. Respects lhs_keep correctly. Writes one part max.
         """
         rhs_keep = 0 if self.is_final else write.min_write_sz
         lhs_keep = 0 if self.started_write else self.lhs_keep
         parts_to_keep = 0 if self.is_final else 1
 
         if self.write_credits - parts_to_keep < 1:
+            return self  # Cannot write
+
+        # Determine spillable data amount
+        data_to_consider = self.data
+        is_first_write_attempt = not self.started_write
+        if is_first_write_attempt and lhs_keep > 0:
+            if len(self.data) <= lhs_keep:
+                return self
+            data_to_consider = self.data[lhs_keep:]
+
+        bytes_available_for_spill = len(data_to_consider) - rhs_keep
+        if bytes_available_for_spill < spill_sz:
             return self
 
-        bytes_available = len(self.data) - rhs_keep - lhs_keep
-        if bytes_available < spill_sz:
-            return self
+        # Determine data to write and new state buffers
+        data_to_write: bytes
+        new_data_after_write: bytearray
+        new_left_data: bytearray
+        part_id_to_use = self.nextPartId
 
-        write_chunk_size = min(bytes_available, write.max_write_sz)
-        if write_chunk_size <= 0:
-            return self
-
-        # --- Prepare state for the new chunk ---
-        new_data = self.data[:]
-        new_left_data = self.left_data[:]
-        new_parts = self.parts[:]
-
-        spill_data: bytearray
-        if lhs_keep == 0:
-            spill_data = new_data[:write_chunk_size]
-            new_data = new_data[write_chunk_size:]
+        if is_first_write_attempt and lhs_keep > 0:
+            # Write lhs_keep + first part of spillable data together
+            write_chunk_size = min(len(data_to_consider), write.max_write_sz)
+            data_to_write = bytes(self.data[: lhs_keep + write_chunk_size])
+            new_left_data = bytearray()  # Keep data is being written
+            new_data_after_write = self.data[lhs_keep + write_chunk_size :]
         else:
-            spill_data = new_data[lhs_keep : lhs_keep + write_chunk_size]
-            if new_left_data:
-                logger.warning("maybe_write: Overwriting existing left_data.")
-            new_left_data = new_data[:lhs_keep]
-            new_data = new_data[lhs_keep + write_chunk_size :]
+            # Write from the main buffer, respecting max size and rhs_keep
+            write_chunk_size = min(len(self.data) - rhs_keep, write.max_write_sz)
+            if write_chunk_size <= 0:
+                return self  # Safety check
+            data_to_write = bytes(self.data[:write_chunk_size])
+            new_data_after_write = self.data[write_chunk_size:]
+            new_left_data = self.left_data[:]  # Keep existing left_data
 
-        if not write.min_part <= self.nextPartId <= write.max_part:
-            raise ValueError(f"maybe_write: Next Part ID {self.nextPartId} out of range")
+        # --- Perform the Write (Inlined Logic) ---
+        if self.write_credits < 1:
+            raise RuntimeError(f"Insufficient credits: part {part_id_to_use}")
+        if not write.min_part <= part_id_to_use <= write.max_part:
+            raise ValueError(f"Part ID {part_id_to_use} out of range")
+        if len(data_to_write) > write.max_write_sz:
+            logger.warning("maybe_write: Writing oversized part %d", part_id_to_use)
 
         try:
-            part_info = write(self.nextPartId, bytes(spill_data))
+            part_info = write(part_id_to_use, data_to_write)
         except Exception as e:
-            logger.error("maybe_write: Writer failed part %d: %s", self.nextPartId, e, exc_info=True)
-            raise RuntimeError(f"Writer failed during maybe_write for part {self.nextPartId}") from e
+            logger.error("maybe_write: Writer failed part %d: %s", part_id_to_use, e, exc_info=True)
+            raise RuntimeError(f"Writer failed during maybe_write for part {part_id_to_use}") from e
+        if part_info.get("PartNumber") != part_id_to_use:
+            logger.warning("PartNumber mismatch %d", part_id_to_use)
+        # --- End Inlined Write ---
 
-        new_parts.append(part_info)
-        new_nextPartId = self.nextPartId + 1
-        new_write_credits = self.write_credits - 1
+        new_parts = self.parts + [part_info]
+        new_next_id = part_id_to_use + 1
+        new_credits = self.write_credits - 1
 
-        return MPUChunk(  # Return new state
-            new_nextPartId,
-            new_write_credits,
-            new_data,
-            new_left_data,
-            new_parts,
-            self.observed[:],
-            self.is_final,
-            self.lhs_keep,
+        # Return new state
+        return self._clone(
+            data=new_data_after_write,
+            left_data=new_left_data,
+            parts=new_parts,
+            nextPartId=new_next_id,
+            write_credits=new_credits,
         )
 
     @staticmethod
@@ -489,7 +420,7 @@ class MPUChunk:
             chunks,
             write=write,
             spill_sz=spill_sz,
-            token="mpu.append",
+            token="mpu.append",  # Pass spill_sz
         )
 
         return mpus.fold(
@@ -522,12 +453,12 @@ def mpu_write(
     mk_footer: Any = None,
     user_kw: Optional[dict[str, Any]] = None,
     writes_per_chunk: int = 1,
-    spill_sz: int = 20 * (1 << 20),
+    spill_sz: int = 0,  # Default spill_sz=0
     dask_name_prefix: str = "mpufinalise",
     client: Any = None,
 ) -> Delayed:
     """
-    Constructs the main Dask graph for multi-part upload.
+    Constructs the main Dask graph for MPU (immutable style).
     """
     # pylint: disable=too-many-locals
 
@@ -535,7 +466,7 @@ def mpu_write(
         chunks = [chunks]
 
     min_part = write.min_part if write else 1
-    lhs_keep = write.min_write_sz if write and spill_sz > 0 else 0
+    lhs_keep = write.min_write_sz if write and mk_header else 0
 
     partId = min_part
     dss: list["dask.bag.Item"] = []
@@ -549,7 +480,7 @@ def mpu_write(
             partId,
             ch_bag,
             writes_per_chunk=writes_per_chunk,
-            lhs_keep=lhs_keep,  # Pass consistent lhs_keep
+            lhs_keep=lhs_keep,  # Consistent lhs_keep
             spill_sz=spill_sz,
             mark_final=(mk_footer is None and idx == len(chunks) - 1),
             write=write,
@@ -573,7 +504,6 @@ def mpu_write(
         mk_header=mk_header,
         mk_footer=mk_footer,
         user_kw=finalizer_user_kw,
-        # final_task_timeout=1200, # Pass timeout if needed
     )
 
 
@@ -583,12 +513,12 @@ def mpu_write(
 def _mpu_collate_op(substreams: list[MPUChunk], *, write: Optional[PartsWriter] = None, spill_sz: int = 0) -> MPUChunk:
     """Dask delayed function: Sequentially merge MPUChunk results (immutable style)."""
     if not substreams:
-        raise ValueError("Received empty list of substreams to collate.")
+        raise ValueError("Cannot collate empty list.")
     root = substreams[0]
     for rhs in substreams[1:]:
         root = MPUChunk.merge(root, rhs, write=None)
         if write and spill_sz > 0:
-            root = root.maybe_write(write, spill_sz)  # Use returned state
+            root = root.maybe_write(write, spill_sz)
     return root
 
 
@@ -602,12 +532,12 @@ def _mpu_append_chunks_op(
     try:
         mpu = next(iter(mpus))
     except StopIteration as exc:
-        raise ValueError("MPUChunk state missing in map_partitions.") from exc
+        raise ValueError("MPU state missing") from exc
 
     for data, chunk_id in chunks:
-        mpu = mpu.append(data, chunk_id)  # Update mpu with returned state
+        mpu = mpu.append(data, chunk_id)  # Update mpu state
         if write is not None and spill_sz > 0:
-            mpu = mpu.maybe_write(write, spill_sz)  # Update mpu with returned state
+            mpu = mpu.maybe_write(write, spill_sz)  # Update mpu state
 
     return [mpu]
 
@@ -630,13 +560,12 @@ def _finalizer_dask_op(
     mk_header: Any = None,
     mk_footer: Any = None,
     user_kw: Optional[dict[str, Any]] = None,
-    final_task_timeout: int = 1200,  # Increased timeout
+    final_task_timeout: int = 1200,
     # pylint: disable=unused-argument
     dask_key_name: Optional[str] = None,
 ):
     """
-    Dask graph node: Final step processing header/footer and submitting
-    the actual remote flush/commit task.
+    Dask graph node: Final step processing header/footer and submitting remote task.
     """
     user_kw = user_kw or {}
     final_chunk = data_substream
@@ -648,11 +577,11 @@ def _finalizer_dask_op(
         ]
         if footer_bytes:
             if not isinstance(footer_bytes, (bytes, bytearray)):
-                raise TypeError("mk_footer must return bytes/bytearray")
+                raise TypeError("footer")
             final_chunk = final_chunk.append(footer_bytes)  # Update reference
         if hdr_bytes:
             if not isinstance(hdr_bytes, (bytes, bytearray)):
-                raise TypeError("mk_header must return bytes/bytearray")
+                raise TypeError("header")
             header_part_id = write.min_part if write else 1
             hdr_chunk = MPUChunk(header_part_id, 1, lhs_keep=final_chunk.lhs_keep)
             hdr_chunk = hdr_chunk.append(hdr_bytes)
@@ -670,7 +599,7 @@ def _finalizer_dask_op(
     try:
         client = get_client()
     except ValueError as exc:
-        raise RuntimeError("Dask client not found in _finalizer_dask_op") from exc
+        raise RuntimeError("Dask client not found") from exc
     except Exception as exc:
         raise RuntimeError("Failed to get Dask client.") from exc
 
@@ -692,7 +621,7 @@ def _finalizer_dask_op(
         logger.error("Timed out waiting for remote final task %s after %ds.", future.key, final_task_timeout)
         try:
             future.cancel(asynchronous=True)
-            logger.warning("Cancellation requested for task: %s", future.key)
+            logger.warning("Cancellation requested: %s", future.key)
         except Exception as cancel_e:
             logger.error("Error cancelling task %s: %s", future.key, cancel_e)
         raise
@@ -708,21 +637,21 @@ def _finalizer_dask_op(
 
 
 def _remote_final_flush(chunk_state: MPUChunk, writer_obj: PartsWriter):
-    """Function executed remotely on worker to perform final flush/commit."""
+    """Executed remotely to perform final flush/commit."""
     worker_logger = logging.getLogger(__name__)
-    worker_logger.info("Executing remote final flush/commit task for %s state: %s", type(writer_obj), chunk_state)
+    worker_logger.info("Executing remote final flush for %s state: %s", type(writer_obj), chunk_state)
     try:
-        # flush returns (new_state, result)
-        _final_state, final_result = chunk_state.flush(writer_obj, leftPartId=None, finalise=True)
-        worker_logger.info("Remote final flush/commit task COMPLETED. Result: %s", final_result)
+        # Flush returns (final_state, result)
+        _final_state, final_result = chunk_state.flush(writer_obj, finalise=True)
+        worker_logger.info("Remote final flush COMPLETED. Result: %s", final_result)
         return final_result
     except Exception as worker_e:
-        worker_logger.error("Error during remote final flush/commit task: %s", worker_e, exc_info=True)
+        worker_logger.error("Error during remote final flush: %s", worker_e, exc_info=True)
         raise
 
 
 def get_mpu_kwargs(
-    mk_header=None, mk_footer=None, user_kw=None, writes_per_chunk=1, spill_sz=20 * (1 << 20), client=None
+    mk_header=None, mk_footer=None, user_kw=None, writes_per_chunk=1, spill_sz=0, client=None  # Default spill_sz=0
 ) -> dict:
     """Helper to construct shared keyword arguments for MPU functions."""
     return {
@@ -745,25 +674,23 @@ def mpu_upload(
     mk_footer: Any = None,
     user_kw: Optional[dict[str, Any]] = None,
     writes_per_chunk: int = 1,
-    spill_sz: int = 20 * (1 << 20),
+    spill_sz: int = 0,  # Default spill_sz=0
     client: Any = None,
     **writer_factory_kw: Any,
 ) -> Delayed:
     """
-    High-level function to set up and execute MPU using Dask Bags.
-    Separates MPU parameters from writer factory parameters.
+    High-level function for MPU graph (immutable, corrected logic).
     """
     factory_call_kw = {"kw": writer_factory_kw, "client": client}
     write_instance: Optional[PartsWriter] = None
 
-    if spill_sz > 0:
+    # Instantiate writer if writing will actually occur
+    if mk_header or mk_footer or chunks:
         try:
             write_instance = writer(**factory_call_kw)
         except TypeError as e:
-            logger.error("TypeError calling writer factory %s with %s: %s", writer, factory_call_kw, e)
             raise TypeError(f"Writer factory {writer} incompatible with arguments.") from e
         except Exception as e:
-            logger.error("Failed to instantiate writer callable from %s: %s", writer, e, exc_info=True)
             raise RuntimeError("Writer factory instantiation failed.") from e
 
     return mpu_write(
@@ -773,7 +700,7 @@ def mpu_upload(
         mk_footer=mk_footer,
         user_kw=user_kw,
         writes_per_chunk=writes_per_chunk,
-        spill_sz=spill_sz,
+        spill_sz=spill_sz,  # Pass spill_sz
         dask_name_prefix=dask_name_prefix,
         client=client,
     )
